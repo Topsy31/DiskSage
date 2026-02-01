@@ -102,7 +102,7 @@ export interface ProblemReport {
 
 // App state
 export interface AppState {
-  phase: 'intro' | 'import' | 'analysis' | 'results';
+  phase: 'start' | 'results';
   safetyConfirmed: boolean;
   entries: FileEntry[];
   recommendations: RecommendationItem[];

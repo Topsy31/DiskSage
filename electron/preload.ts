@@ -52,16 +52,37 @@ const electronAPI = {
   },
 
   // Session management API
-  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[]): Promise<void> => {
-    return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations)
+  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[]): Promise<void> => {
+    return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations, markedPaths)
   },
 
-  loadSession: (): Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; savedAt: string } | null> => {
+  loadSession: (): Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; savedAt: string } | null> => {
     return ipcRenderer.invoke('load-session')
   },
 
   clearSession: (): Promise<void> => {
     return ipcRenderer.invoke('clear-session')
+  },
+
+  // Quick scan API
+  getScanTargets: (): Promise<Array<{
+    id: string
+    name: string
+    description: string
+    category: string
+    availablePaths: string[]
+    exists: boolean
+  }>> => {
+    return ipcRenderer.invoke('get-scan-targets')
+  },
+
+  quickScan: (targetIds: string[]): Promise<FileEntry[]> => {
+    return ipcRenderer.invoke('quick-scan', targetIds)
+  },
+
+  onScanProgress: (callback: (progress: { current: string; scanned: number; total: number }) => void) => {
+    ipcRenderer.on('scan-progress', (_event, progress) => callback(progress))
+    return () => ipcRenderer.removeAllListeners('scan-progress')
   }
 }
 

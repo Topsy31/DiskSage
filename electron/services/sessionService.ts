@@ -7,6 +7,7 @@ interface SessionData {
   csvFilePath: string
   entries: FileEntry[]
   recommendations: RecommendationItem[]
+  markedPaths?: string[]
   savedAt: string
 }
 
@@ -32,7 +33,8 @@ async function ensureDir(): Promise<void> {
 export async function saveSession(
   csvFilePath: string,
   entries: FileEntry[],
-  recommendations: RecommendationItem[]
+  recommendations: RecommendationItem[],
+  markedPaths?: string[]
 ): Promise<void> {
   await ensureDir()
   const sessionPath = getSessionPath()
@@ -41,6 +43,7 @@ export async function saveSession(
     csvFilePath,
     entries,
     recommendations,
+    markedPaths,
     savedAt: new Date().toISOString()
   }
 

@@ -8,6 +8,7 @@ import { askClaudeAI } from './services/claude'
 import { webResearch } from './services/webResearch'
 import { disableItems, restoreItems, deleteDisabledItems, getActiveTest } from './services/removalService'
 import { saveSession, loadSession, clearSession } from './services/sessionService'
+import { quickScan, getAvailableTargets, SCAN_TARGETS } from './services/scanner'
 import { v4 as uuidv4 } from 'uuid'
 
 // Session ID for audit logging
@@ -154,8 +155,8 @@ ipcMain.handle('get-active-test', async () => {
 
 // Session management handlers
 
-ipcMain.handle('save-session', async (_event, csvFilePath: string, entries, recommendations) => {
-  return saveSession(csvFilePath, entries, recommendations)
+ipcMain.handle('save-session', async (_event, csvFilePath: string, entries, recommendations, markedPaths?: string[]) => {
+  return saveSession(csvFilePath, entries, recommendations, markedPaths)
 })
 
 ipcMain.handle('load-session', async () => {
@@ -164,4 +165,14 @@ ipcMain.handle('load-session', async () => {
 
 ipcMain.handle('clear-session', async () => {
   return clearSession()
+})
+
+// Quick scan handlers
+
+ipcMain.handle('get-scan-targets', async () => {
+  return getAvailableTargets()
+})
+
+ipcMain.handle('quick-scan', async (_event, targetIds: string[]) => {
+  return quickScan(targetIds, mainWindow)
 })

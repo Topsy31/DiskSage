@@ -17,9 +17,21 @@ export interface ElectronAPI {
   getActiveTest: () => Promise<RemovalTestJob | null>
 
   // Session management API
-  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[]) => Promise<void>
-  loadSession: () => Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; savedAt: string } | null>
+  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[]) => Promise<void>
+  loadSession: () => Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; savedAt: string } | null>
   clearSession: () => Promise<void>
+
+  // Quick scan API
+  getScanTargets: () => Promise<Array<{
+    id: string
+    name: string
+    description: string
+    category: string
+    availablePaths: string[]
+    exists: boolean
+  }>>
+  quickScan: (targetIds: string[]) => Promise<FileEntry[]>
+  onScanProgress: (callback: (progress: { current: string; scanned: number; total: number }) => void) => () => void
 }
 
 declare global {
