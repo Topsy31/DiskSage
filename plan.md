@@ -1,6 +1,46 @@
 # DiskSage — Implementation Plan
 
-Smart disk cleanup advisor that combines offline analysis with AI-powered recommendations.
+Smart disk cleanup advisor that helps non-technical users understand and manage disk space safely.
+
+---
+
+## ICE Framework Summary
+
+### Intent
+
+**Primary goal:** Help non-technical users understand and manage disk space across:
+- Emergency cleanup (disk full now)
+- Routine maintenance (prevent future problems)
+- Understanding usage (know where space goes)
+
+**Success criteria:**
+- Identify measurable space recovery potential
+- User understands what each item is and feels confident in decisions
+- Analysis completes quickly (target: under 2 minutes for WizTree import)
+
+**User context:** Non-technical users with unknown file relationships. Mistakes are potentially catastrophic — lost files could mean lost work, memories, or irreplaceable data.
+
+### Constraints
+
+| Constraint | Decision |
+|------------|----------|
+| **Safety model** | Informative — show everything with clear risk indicators, user decides |
+| **Action scope** | Never delete files — recommendations only |
+| **Jargon level** | Explain everything — assume user doesn't know what AppData is |
+| **AI costs** | User provides API key, pays per use |
+| **Privacy** | Anonymise paths before sending to AI |
+| **Tracking** | No persistent tracking — fresh analysis every time |
+| **Offline mode** | Degraded but functional — core features work without AI |
+
+### Expectations
+
+| Aspect | Expectation |
+|--------|-------------|
+| **First run** | Guided setup explaining what the app does |
+| **Organisation** | User chooses — sortable/filterable by size, safety, category |
+| **Explanations** | Expandable — summary by default, click for full detail |
+| **Action types** | Full spectrum — delete, move, archive, backup, leave alone |
+| **Move support** | Recommendations only — user moves files manually |
 
 ---
 
@@ -11,19 +51,22 @@ Smart disk cleanup advisor that combines offline analysis with AI-powered recomm
 │                    Electron Desktop App                      │
 ├─────────────────────────────────────────────────────────────┤
 │  React Frontend                                              │
+│  ├── Onboarding wizard (first-run setup)                    │
 │  ├── Dashboard (drive overview, space breakdown)            │
-│  ├── Recommendations list (sortable by risk/size/type)      │
-│  ├── File browser (drill into folders)                      │
-│  └── Settings (AI provider config, privacy options)         │
+│  ├── Recommendations list (sortable, filterable)            │
+│  ├── Detail panel (expandable explanations)                 │
+│  ├── Folder browser (drill into structure)                  │
+│  └── Settings (AI provider config)                          │
 ├─────────────────────────────────────────────────────────────┤
 │  Analysis Engine (Node.js backend)                          │
 │  ├── WizTree CSV parser                                     │
 │  ├── Direct disk scanner (fallback)                         │
-│  ├── Offline rule engine (pattern matching, known paths)    │
-│  ├── Path anonymiser (hash usernames, project names)        │
-│  └── AI orchestrator (batches queries, manages costs)       │
+│  ├── Offline rule engine (pattern matching)                 │
+│  ├── Education database (plain-English explanations)        │
+│  ├── Path anonymiser                                        │
+│  └── AI orchestrator (batched queries)                      │
 ├─────────────────────────────────────────────────────────────┤
-│  AI Adapters (configurable)                                 │
+│  AI Adapters (user-configured)                              │
 │  ├── Claude API                                             │
 │  ├── OpenAI API                                             │
 │  └── Ollama (local)                                         │
@@ -32,75 +75,283 @@ Smart disk cleanup advisor that combines offline analysis with AI-powered recomm
 
 ---
 
-## Offline Analysis (No AI Needed)
+## Core Design Principles
 
-The app will classify ~80% of files without any API calls using pattern matching:
+### 1. Education First
 
-| Category | Detection Method | Default Risk |
-|----------|------------------|--------------|
-| **Windows system** | Known paths (`C:\Windows\*`, `C:\$Recycle.Bin\*`) | 5 (Do not delete) |
-| **Installer cache** | `.msi`, `.msp` in `Windows\Installer` | 2 (Safe with tool) |
-| **Temp files** | `*\Temp\*`, `*.tmp`, `~$*` | 1 (Safe to delete) |
-| **Browser cache** | Known Chrome/Firefox/Edge cache paths | 1 (Safe to delete) |
-| **Package managers** | `node_modules`, `.npm`, `.nuget`, `pip-cache` | 2 (Rebuildable) |
-| **IDE caches** | `.vscode`, `.idea`, `__pycache__` | 1 (Safe to delete) |
-| **Logs** | `*.log`, `*\Logs\*` | 1 (Usually safe) |
-| **Backups/Installers** | `*.bak`, `*.old`, `SWSETUP`, recovery partitions | 2 (Review first) |
-| **Media files** | `*.mp4`, `*.mov`, `*.iso` (large files) | 3 (Move/backup) |
-| **User documents** | `Documents\*`, `Desktop\*` | 4 (Backup first) |
-| **Application data** | `AppData\Local\*` (unknown apps) | 3 (AI review) |
+Every item shows:
+- **What it is** (plain English, no jargon)
+- **Why it exists** (what created it, what uses it)
+- **What happens if deleted** (consequences explained clearly)
+- **Recommended action** (with reasoning)
 
-### Risk Score Scale
+Example for a non-technical user:
 
-| Score | Meaning | Recommended Action |
-|-------|---------|-------------------|
-| 1 | Safe to delete | Delete immediately |
-| 2 | Low risk | Delete after review |
-| 3 | Medium risk | Backup before deleting, or move |
-| 4 | Higher risk | Backup required before any action |
-| 5 | Do not delete | System critical, leave alone |
+```
+┌────────────────────────────────────────────────────────────┐
+│ Chrome Browser Cache                              2.3 GB   │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+│ Risk: Very Low ●○○○○                                       │
+│ Recommendation: Safe to delete                             │
+│                                                            │
+│ [▼ What is this?]                                          │
+│                                                            │
+│ This is temporary data stored by Google Chrome to make     │
+│ websites load faster. It includes copies of images,        │
+│ scripts, and other files from websites you've visited.     │
+│                                                            │
+│ If you delete this:                                        │
+│ • Websites may load slightly slower the first time         │
+│ • You won't lose any bookmarks, passwords, or history      │
+│ • Chrome will rebuild the cache automatically              │
+│                                                            │
+│ This is completely safe to delete.                         │
+└────────────────────────────────────────────────────────────┘
+```
+
+### 2. Conservative Recommendations
+
+When uncertain, the app should:
+- Label items as "Review needed" rather than guessing
+- Suggest "Leave alone" when risk outweighs benefit
+- Never pressure users toward deletion
+- Make "I don't know" a valid answer
+
+### 3. Transparency
+
+- Show whether classification came from offline rules or AI
+- Display AI query cost before running (if applicable)
+- Explain why AI couldn't classify something (if offline-only)
 
 ---
 
-## AI-Assisted Analysis
+## Recommendation Categories
 
-For items that don't match known patterns, we batch-query the AI with anonymised data:
+Each item receives one of these recommendations:
 
-### Example Query
+| Recommendation | Meaning | When to use |
+|----------------|---------|-------------|
+| **Safe to delete** | Very low risk, no consequences | Temp files, caches, old logs |
+| **Probably safe** | Low risk, minor consequences | Installer caches, package caches |
+| **Review first** | Uncertain — user should check | Unknown app data, ambiguous folders |
+| **Backup first** | Medium value, delete after backup | Old projects, documents, downloads |
+| **Move to another drive** | Valuable but rarely accessed | Media, archives, completed projects |
+| **Leave alone** | Necessary or high risk | System files, active app data |
 
-```
-Folder: C:\Users\[USER]\AppData\Local\[HASH_ABC123]\DataCollection\
-Size: 2.3 GB
-File count: 847
-File types: .log (98%), .json (2%)
-Oldest file: 2024-03-15
-Newest file: 2026-02-01
+### Risk Score Scale (1-5)
 
-Question: What is this likely to be? Risk score 1-5? Recommended action?
-```
-
-### Anonymisation Strategy
-
-1. Replace username in paths with `[USER]`
-2. Hash application/project folder names that aren't in known-apps list
-3. Preserve file extensions and folder structure patterns
-4. Include size, file counts, and date ranges (non-identifying)
+| Score | Label | Colour | Meaning |
+|-------|-------|--------|---------|
+| 1 | Very Low | Green | Safe to delete without consequences |
+| 2 | Low | Light green | Minor inconvenience if wrong |
+| 3 | Medium | Yellow | Could cause issues, review first |
+| 4 | High | Orange | Likely important, backup recommended |
+| 5 | Critical | Red | Do not delete, system may break |
 
 ---
 
-## Output Categories
+## Offline Analysis Rules
 
-Each analysed item receives:
+The app classifies ~80% of items without AI using pattern matching:
 
-| Field | Description |
-|-------|-------------|
-| **Path** | Full path to file/folder |
-| **Size** | Size in bytes (formatted for display) |
-| **Category** | e.g., "Browser Cache", "Windows Installer", "Unknown App Data" |
-| **Risk Score** | 1-5 scale |
-| **Recommended Action** | Delete / Review / Backup / Move / Keep |
-| **Reasoning** | Brief explanation (from rules or AI) |
-| **Source** | "Offline" or "AI" — indicates how classification was determined |
+### Windows System (Risk 5 - Critical)
+
+| Pattern | What it is | Explanation |
+|---------|-----------|-------------|
+| `C:\Windows\System32\*` | Core Windows files | Windows needs these to run. Never delete. |
+| `C:\Windows\WinSxS\*` | Windows component store | Shared libraries Windows uses. Looks big but necessary. |
+| `C:\Program Files\*` | Installed programs | Your applications live here. |
+
+### Safe to Delete (Risk 1)
+
+| Pattern | What it is | Explanation |
+|---------|-----------|-------------|
+| `*\Temp\*` | Temporary files | Scratch space for programs. Safe to clear. |
+| `*\Cache\*` | Cached data | Speeds up apps but rebuilds automatically. |
+| `*.tmp` | Temp file | Leftover from crashed or finished programs. |
+| `~$*` | Office temp file | Created while editing Office docs. Safe if file closed. |
+| `*\Cookies\*` | Browser cookies | Website login data. May need to re-login to sites. |
+
+### Low Risk (Risk 2)
+
+| Pattern | What it is | Explanation |
+|---------|-----------|-------------|
+| `C:\Windows\Installer\*.msp` | Windows patches | Old update files. Use PatchCleaner tool to safely remove. |
+| `*\node_modules\*` | JavaScript dependencies | Downloaded packages. Can recreate with `npm install`. |
+| `*\.nuget\*` | .NET packages | Downloaded packages. Can recreate by building project. |
+| `*\__pycache__\*` | Python cache | Compiled Python files. Recreated automatically. |
+
+### Needs Review (Risk 3)
+
+| Pattern | What it is | Explanation |
+|---------|-----------|-------------|
+| `*\AppData\Local\*` (unknown) | Application data | Settings and data for programs. Ask AI what specific app does. |
+| `*\Downloads\*` | Downloaded files | Could be important. Check before deleting. |
+| `C:\SWSETUP\*` | HP driver installers | Safe after setup, but keep if you might reinstall drivers. |
+
+### Backup Recommended (Risk 4)
+
+| Pattern | What it is | Explanation |
+|---------|-----------|-------------|
+| `*\Documents\*` | Your documents | Personal files. Backup before any cleanup. |
+| `*\Desktop\*` | Desktop files | Files saved to desktop. Often important. |
+| `*\Pictures\*` | Your photos | Personal memories. Never delete without backup. |
+
+---
+
+## AI Integration
+
+### When to Query AI
+
+AI is used when:
+1. Path doesn't match any known pattern
+2. Item is in AppData but app name not recognised
+3. Large folder (>100MB) with ambiguous contents
+
+### Anonymisation
+
+Before sending to AI:
+
+```
+Original: C:\Users\Mark\AppData\Local\SomeApp\DataCollection\logs
+Becomes:  C:\Users\[USER]\AppData\Local\[APP_HASH_A1B2]\DataCollection\logs
+```
+
+Preserved: folder structure, file types, sizes, dates
+Removed: usernames, specific app names (unless in known-apps list)
+
+### AI Prompt Template
+
+```
+I'm analysing disk usage on a Windows computer. Please help me understand this folder:
+
+Path pattern: C:\Users\[USER]\AppData\Local\[APP_HASH]\DataCollection\
+Total size: 2.3 GB
+File count: 847 files
+File types: .log (94%), .json (5%), .txt (1%)
+Oldest file: March 2024
+Newest file: February 2026
+
+Please tell me:
+1. What type of application likely created this? (e.g., "diagnostic logging", "analytics")
+2. What is this data used for?
+3. Risk score 1-5 for deletion (1=safe, 5=critical)
+4. Plain-English explanation suitable for a non-technical user
+5. Recommended action: delete / review / backup / move / leave alone
+```
+
+### Cost Management
+
+- Show estimated cost before AI analysis
+- Batch multiple queries into single API call
+- Cache responses for identical anonymised patterns
+- Allow user to skip AI and mark as "Unknown"
+
+---
+
+## User Interface
+
+### Onboarding Wizard (First Run)
+
+**Step 1: Welcome**
+> DiskSage helps you understand what's using space on your computer and what's safe to clean up.
+>
+> It will never delete anything — it only gives recommendations. You stay in control.
+
+**Step 2: How It Works**
+> 1. You export your disk data from WizTree (we'll show you how)
+> 2. DiskSage analyses the data and explains what everything is
+> 3. You decide what to clean up using File Explorer
+
+**Step 3: AI Setup (Optional)**
+> For folders we don't recognise, AI can help identify what they are.
+> This is optional — DiskSage works without it.
+>
+> [Configure AI] or [Skip for now]
+
+**Step 4: Get Started**
+> [Import WizTree File] or [Learn how to export from WizTree]
+
+### Main Dashboard
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  DiskSage                                    [Settings] [Help]   │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Drive C: — 229 GB used of 235 GB (97%)  ████████████████████░  │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │ Potential savings identified: 47.2 GB                       │ │
+│  │                                                              │ │
+│  │  Safe to delete      ████████████████  18.3 GB             │ │
+│  │  Review first        ████████          12.1 GB             │ │
+│  │  Move/archive        ████████████      16.8 GB             │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  Sort by: [Size ▼]  Filter: [All categories ▼]  [Export report]  │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────┬────┐ │
+│  │ Windows Installer Patches                              │ 30GB│ │
+│  │ Risk: Low ●●○○○  |  Probably safe to delete           │     │ │
+│  ├────────────────────────────────────────────────────────┼────┤ │
+│  │ Chrome Browser Cache                                   │ 2.3G│ │
+│  │ Risk: Very Low ●○○○○  |  Safe to delete               │     │ │
+│  ├────────────────────────────────────────────────────────┼────┤ │
+│  │ HP Driver Installers (SWSETUP)                        │ 3.7G│ │
+│  │ Risk: Low ●●○○○  |  Review first                      │     │ │
+│  ├────────────────────────────────────────────────────────┼────┤ │
+│  │ Downloads folder                                       │ 8.2G│ │
+│  │ Risk: Medium ●●●○○  |  Review contents                │     │ │
+│  └────────────────────────────────────────────────────────┴────┘ │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Detail Panel (Expanded View)
+
+When user clicks an item, show full explanation:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Windows Installer Patches                               30 GB  │
+│ Location: C:\Windows\Installer\                                │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+│                                                                │
+│ Risk Level: Low ●●○○○                                          │
+│ Recommendation: Probably safe to delete                        │
+│ Analysis: Offline rules                                        │
+│                                                                │
+│ ─── What is this? ───────────────────────────────────────────  │
+│                                                                │
+│ When Windows and other programs update, they save the old      │
+│ update files here in case you need to uninstall the update.    │
+│ Over time, this folder grows very large with outdated patches  │
+│ that are no longer needed.                                     │
+│                                                                │
+│ Your folder contains 1,133 files, mostly .msp (patch) files    │
+│ dating from 2017 to 2026.                                      │
+│                                                                │
+│ ─── What happens if I delete this? ─────────────────────────   │
+│                                                                │
+│ • You may not be able to uninstall old Windows updates         │
+│ • Your installed programs will continue working                │
+│ • Windows Update will continue working                         │
+│                                                                │
+│ ─── How to clean this safely ────────────────────────────────  │
+│                                                                │
+│ Don't delete these files directly. Instead:                    │
+│                                                                │
+│ 1. Download "PatchCleaner" (free tool)                         │
+│ 2. Run it as Administrator                                     │
+│ 3. It identifies which patches are orphaned (truly not needed) │
+│ 4. Delete only the orphaned ones                               │
+│                                                                │
+│ Estimated safe savings: 20-25 GB                               │
+│                                                                │
+│ [Open folder in Explorer]  [Copy path]                         │
+└────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -117,193 +368,145 @@ DiskSage/
 │
 ├── electron/
 │   ├── main.ts                    # Electron main process
-│   ├── preload.ts                 # Secure bridge to renderer
+│   ├── preload.ts                 # Secure IPC bridge
 │   └── services/
-│       ├── disk-scanner.ts        # Direct disk scanning (fallback)
-│       ├── wiztree-parser.ts      # WizTree CSV import
+│       ├── wiztree-parser.ts      # CSV import and validation
+│       ├── disk-scanner.ts        # Direct scan fallback
 │       ├── analyzer.ts            # Offline rule engine
+│       ├── education.ts           # Plain-English explanations
 │       ├── anonymizer.ts          # Path sanitisation
-│       ├── ai-orchestrator.ts     # Batches AI queries, manages costs
+│       ├── ai-orchestrator.ts     # AI query management
 │       └── ai-adapters/
-│           ├── types.ts           # Common interface
-│           ├── claude.ts          # Anthropic Claude adapter
-│           ├── openai.ts          # OpenAI GPT adapter
-│           └── ollama.ts          # Local Ollama adapter
+│           ├── types.ts
+│           ├── claude.ts
+│           ├── openai.ts
+│           └── ollama.ts
 │
-├── src/                           # React frontend
-│   ├── main.tsx                   # Entry point
-│   ├── App.tsx                    # Root component
+├── src/
+│   ├── main.tsx
+│   ├── App.tsx
 │   ├── components/
-│   │   ├── Dashboard.tsx          # Drive overview, charts
-│   │   ├── RecommendationList.tsx # Sortable/filterable results
-│   │   ├── RecommendationCard.tsx # Individual item display
-│   │   ├── FolderTree.tsx         # Drill-down file browser
-│   │   ├── ImportPanel.tsx        # WizTree CSV import UI
-│   │   ├── ProgressBar.tsx        # Analysis progress
-│   │   └── Settings.tsx           # AI provider configuration
+│   │   ├── Onboarding/
+│   │   │   ├── Welcome.tsx
+│   │   │   ├── HowItWorks.tsx
+│   │   │   ├── AISetup.tsx
+│   │   │   └── GetStarted.tsx
+│   │   ├── Dashboard/
+│   │   │   ├── DriveOverview.tsx
+│   │   │   ├── SavingsSummary.tsx
+│   │   │   └── CategoryBreakdown.tsx
+│   │   ├── Recommendations/
+│   │   │   ├── RecommendationList.tsx
+│   │   │   ├── RecommendationCard.tsx
+│   │   │   ├── DetailPanel.tsx
+│   │   │   └── FilterSort.tsx
+│   │   ├── Import/
+│   │   │   ├── ImportPanel.tsx
+│   │   │   └── WizTreeGuide.tsx
+│   │   ├── Settings/
+│   │   │   ├── SettingsPanel.tsx
+│   │   │   └── AIProviderConfig.tsx
+│   │   └── common/
+│   │       ├── RiskBadge.tsx
+│   │       ├── SizeDisplay.tsx
+│   │       └── ProgressBar.tsx
 │   ├── hooks/
-│   │   ├── useAnalysis.ts         # Analysis state management
-│   │   └── useSettings.ts         # Persistent settings
+│   │   ├── useAnalysis.ts
+│   │   ├── useSettings.ts
+│   │   └── useOnboarding.ts
 │   ├── types/
-│   │   └── index.ts               # Shared TypeScript types
+│   │   └── index.ts
 │   └── styles/
-│       └── globals.css            # Tailwind imports
+│       └── globals.css
 │
-├── rules/
-│   ├── known-paths.json           # Path patterns for offline classification
-│   ├── known-apps.json            # Application names (don't anonymise)
-│   └── file-extensions.json       # Extension-based classification
+├── data/
+│   ├── known-paths.json           # Offline classification rules
+│   ├── known-apps.json            # Recognised application names
+│   ├── explanations.json          # Plain-English descriptions
+│   └── cleanup-guides.json        # Step-by-step cleanup instructions
 │
 └── assets/
-    └── icon.png                   # App icon
+    └── icon.png
 ```
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Project Setup
-- [ ] Initialise Electron + Vite + React project
-- [ ] Configure TypeScript, Tailwind CSS
-- [ ] Set up electron-builder for packaging
-- [ ] Create basic window with dev tools
+### Phase 1: Project Scaffolding
+- [ ] Create Electron + Vite + React project
+- [ ] Configure TypeScript and Tailwind
+- [ ] Set up electron-builder
+- [ ] Create basic window structure
 
-### Phase 2: Data Import
+### Phase 2: Data Layer
 - [ ] Build WizTree CSV parser
-- [ ] Validate and normalise imported data
-- [ ] Create data model for file entries
-- [ ] Build import UI with drag-and-drop
+- [ ] Create data model for analysis items
+- [ ] Build file tree structure from flat data
+- [ ] Add import UI with drag-and-drop
 
-### Phase 3: Offline Analysis Engine
-- [ ] Create rule definitions (known-paths.json)
+### Phase 3: Offline Analysis
+- [ ] Create known-paths.json rules database
 - [ ] Build pattern matching engine
-- [ ] Implement risk scoring algorithm
-- [ ] Generate recommendations from rules
+- [ ] Create explanations.json content
+- [ ] Implement risk scoring
 
-### Phase 4: AI Integration
-- [ ] Define AI adapter interface
+### Phase 4: User Interface
+- [ ] Build onboarding wizard
+- [ ] Create dashboard with charts
+- [ ] Build recommendation list with sort/filter
+- [ ] Create expandable detail panel
+
+### Phase 5: AI Integration
+- [ ] Define adapter interface
 - [ ] Implement path anonymiser
-- [ ] Build Claude API adapter
-- [ ] Build OpenAI API adapter
+- [ ] Build Claude adapter
+- [ ] Build OpenAI adapter
 - [ ] Build Ollama adapter
-- [ ] Create AI orchestrator (batching, cost management)
+- [ ] Create cost estimation
 
-### Phase 5: Frontend UI
-- [ ] Dashboard with drive overview
-- [ ] Recommendation list with sorting/filtering
-- [ ] Folder tree browser
-- [ ] Settings panel for AI configuration
-
-### Phase 6: Polish & Packaging
-- [ ] Error handling and edge cases
-- [ ] Loading states and progress indicators
-- [ ] Package as Windows executable
-- [ ] Create installer
+### Phase 6: Polish
+- [ ] Error handling
+- [ ] Loading states
+- [ ] Export report feature
+- [ ] Package for Windows
 
 ---
 
-## Key Files Detail
+## Content Requirements
 
-### known-paths.json
+### Explanations Database
 
-```json
-{
-  "patterns": [
-    {
-      "pattern": "C:\\\\Windows\\\\Temp\\\\.*",
-      "category": "Windows Temp",
-      "risk": 1,
-      "action": "delete",
-      "reasoning": "Windows temporary files, safe to delete"
-    },
-    {
-      "pattern": "C:\\\\Windows\\\\Installer\\\\.*\\.msp$",
-      "category": "Windows Installer Patches",
-      "risk": 2,
-      "action": "delete",
-      "reasoning": "Old installer patches. Use PatchCleaner for safe removal"
-    },
-    {
-      "pattern": "C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Google\\\\Chrome\\\\User Data\\\\.*\\\\Cache.*",
-      "category": "Chrome Cache",
-      "risk": 1,
-      "action": "delete",
-      "reasoning": "Browser cache, will be rebuilt automatically"
-    }
-  ]
-}
-```
+Need plain-English explanations for:
+- ~50 common Windows paths
+- ~30 common applications
+- ~20 file types
+- ~10 cleanup procedures (e.g., how to use PatchCleaner)
 
-### AI Adapter Interface
+### Tone Guidelines
 
-```typescript
-interface AIAdapter {
-  name: string;
-  isConfigured(): boolean;
-  analyze(items: AnonymisedItem[]): Promise<AIRecommendation[]>;
-}
-
-interface AnonymisedItem {
-  id: string;
-  anonymisedPath: string;
-  size: number;
-  fileCount: number;
-  fileTypes: Record<string, number>;  // extension -> count
-  oldestFile: Date;
-  newestFile: Date;
-}
-
-interface AIRecommendation {
-  id: string;
-  category: string;
-  risk: number;
-  action: 'delete' | 'review' | 'backup' | 'move' | 'keep';
-  reasoning: string;
-}
-```
+- Friendly but not patronising
+- Explain *why* something is safe/risky
+- Give specific, actionable guidance
+- Acknowledge when uncertain
 
 ---
 
-## Cost Management
+## Success Metrics
 
-To minimise AI API costs:
-
-1. **Batch queries:** Send multiple items per API call (up to token limit)
-2. **Cache responses:** Same anonymised patterns get same recommendations
-3. **Progressive disclosure:** Only query AI for items user expands/clicks
-4. **Size threshold:** Only AI-analyse items above configurable size (default 100MB)
-5. **Show estimates:** Display estimated API cost before running AI analysis
+1. **Accuracy:** >95% of known-path classifications are correct
+2. **Coverage:** >80% of items classified without AI
+3. **Clarity:** Non-technical user understands recommendations (user testing)
+4. **Speed:** Analysis completes in <30 seconds for typical WizTree export
+5. **Trust:** User feels confident enough to act on recommendations
 
 ---
 
-## Future Enhancements (v2+)
+## Future Considerations (v2+)
 
-- [ ] Action execution (delete, move with confirmation)
-- [ ] Analysis history and trend tracking
-- [ ] Scheduled scans
-- [ ] Export recommendations as report
-- [ ] Direct disk scan without WizTree
-- [ ] Multi-drive support
-- [ ] Cloud storage analysis (OneDrive, Google Drive)
-
----
-
-## Dependencies
-
-### Production
-- electron
-- react
-- react-dom
-- @anthropic-ai/sdk (Claude)
-- openai (OpenAI)
-- recharts (charts)
-- lucide-react (icons)
-- zustand (state management)
-
-### Development
-- typescript
-- vite
-- electron-builder
-- tailwindcss
-- @types/react
-- @types/node
+- Direct disk scan without WizTree dependency
+- Scheduled analysis reminders
+- Disk space trend tracking over time
+- Integration with Windows Disk Cleanup
+- Multi-drive support
+- Cloud storage analysis
