@@ -1,5 +1,5 @@
-import { useState, useCallback, useMemo } from 'react'
-import { AppState, FileEntry, RecommendationItem, TreeNode } from './types'
+import { useState, useCallback, useMemo, useEffect } from 'react'
+import { AppState, FileEntry, RecommendationItem, TreeNode, RemovalTestJob } from './types'
 import { buildTree } from './utils/treeBuilder'
 import SafetyIntro from './components/SafetyIntro'
 import ImportPanel from './components/ImportPanel'
@@ -8,6 +8,7 @@ import QuickWins from './components/QuickWins'
 import TreeView from './components/TreeView'
 import DetailPanel from './components/DetailPanel'
 import ReportProblem from './components/ReportProblem'
+import TestBanner from './components/TestBanner'
 
 const initialState: AppState = {
   phase: 'intro',
@@ -24,12 +25,52 @@ const initialState: AppState = {
 function App() {
   const [state, setState] = useState<AppState>(initialState)
   const [showReportModal, setShowReportModal] = useState(false)
+  const [activeTest, setActiveTest] = useState<RemovalTestJob | null>(null)
+  const [testLoading, setTestLoading] = useState(false)
+  const [csvFilePath, setCsvFilePath] = useState<string | null>(null)
+
+  // Load active test and previous session on mount
+  useEffect(() => {
+    // Load active test
+    window.electronAPI.getActiveTest().then(test => {
+      if (test) {
+        setActiveTest(test)
+      }
+    })
+
+    // Load previous session
+    window.electronAPI.loadSession().then(session => {
+      if (session) {
+        // Build a lookup map for classifications
+        const classificationMap = new Map<string, RecommendationItem>()
+        for (const rec of session.recommendations) {
+          classificationMap.set(rec.entry.path.toLowerCase(), rec)
+        }
+
+        // Build tree with classification lookup
+        const tree = buildTree(session.entries, (path) => {
+          const rec = classificationMap.get(path.toLowerCase())
+          return rec?.classification
+        })
+
+        setCsvFilePath(session.csvFilePath)
+        setState(prev => ({
+          ...prev,
+          entries: session.entries,
+          recommendations: session.recommendations,
+          tree,
+          phase: 'results',
+          safetyConfirmed: true
+        }))
+      }
+    })
+  }, [])
 
   const handleSafetyConfirmed = useCallback(() => {
     setState(prev => ({ ...prev, safetyConfirmed: true, phase: 'import' }))
   }, [])
 
-  const handleFileImport = useCallback(async (entries: FileEntry[]) => {
+  const handleFileImport = useCallback(async (entries: FileEntry[], filePath: string) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
 
     try {
@@ -46,6 +87,10 @@ function App() {
         const rec = classificationMap.get(path.toLowerCase())
         return rec?.classification
       })
+
+      // Save session for persistence
+      setCsvFilePath(filePath)
+      await window.electronAPI.saveSession(filePath, entries, recommendations)
 
       setState(prev => ({
         ...prev,
@@ -124,6 +169,98 @@ function App() {
     }
   }, [])
 
+  // Removal test handlers
+  const handleTestRemoval = useCallback(async (entries: FileEntry[]) => {
+    setTestLoading(true)
+    try {
+      const job = await window.electronAPI.disableItems(entries)
+      setActiveTest(job)
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to start test'
+      }))
+    } finally {
+      setTestLoading(false)
+    }
+  }, [])
+
+  const handleUndoTest = useCallback(async () => {
+    if (!activeTest) return
+    setTestLoading(true)
+    try {
+      await window.electronAPI.restoreItems(activeTest)
+      setActiveTest(null)
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to restore items'
+      }))
+    } finally {
+      setTestLoading(false)
+    }
+  }, [activeTest])
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!activeTest) return
+    setTestLoading(true)
+    try {
+      const result = await window.electronAPI.deleteDisabledItems(activeTest)
+      setActiveTest(null)
+
+      // Get paths of successfully deleted items
+      const deletedPaths = new Set(
+        activeTest.items
+          .filter(item => item.status === 'renamed')
+          .map(item => item.originalPath.toLowerCase())
+      )
+
+      // Remove deleted items from entries and recommendations
+      setState(prev => {
+        const newEntries = prev.entries.filter(
+          e => !deletedPaths.has(e.path.toLowerCase())
+        )
+        const newRecommendations = prev.recommendations.filter(
+          r => !deletedPaths.has(r.entry.path.toLowerCase())
+        )
+
+        // Rebuild tree
+        const classificationMap = new Map<string, RecommendationItem>()
+        for (const rec of newRecommendations) {
+          classificationMap.set(rec.entry.path.toLowerCase(), rec)
+        }
+        const newTree = buildTree(newEntries, (path) => {
+          const rec = classificationMap.get(path.toLowerCase())
+          return rec?.classification
+        })
+
+        // Update saved session
+        if (csvFilePath) {
+          window.electronAPI.saveSession(csvFilePath, newEntries, newRecommendations)
+        }
+
+        return {
+          ...prev,
+          entries: newEntries,
+          recommendations: newRecommendations,
+          tree: newTree,
+          selectedNode: null,
+          selectedItem: null,
+          error: result.failed.length > 0
+            ? `Deleted ${result.deleted} items. ${result.failed.length} failed.`
+            : null
+        }
+      })
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to delete items'
+      }))
+    } finally {
+      setTestLoading(false)
+    }
+  }, [activeTest, csvFilePath])
+
   // Create a pseudo-RecommendationItem for selected node if we don't have one
   const selectedItem = useMemo(() => {
     if (state.selectedItem) return state.selectedItem
@@ -168,15 +305,32 @@ function App() {
       {state.phase === 'results' && state.tree && (
         <div className="flex h-screen">
           <div className="flex-1 flex flex-col overflow-hidden">
-            <header className="bg-white border-b px-6 py-4 flex justify-between items-center">
+            <header className="bg-white border-b px-6 py-4 flex justify-between items-center flex-shrink-0">
               <h1 className="text-xl font-semibold text-gray-900">DiskSage</h1>
-              <button
-                onClick={() => setShowReportModal(true)}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Report Problem
-              </button>
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setState(prev => ({ ...prev, phase: 'import', selectedNode: null, selectedItem: null }))}
+                  className="text-sm text-blue-600 hover:text-blue-800"
+                >
+                  Import New CSV
+                </button>
+                <button
+                  onClick={() => setShowReportModal(true)}
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Report Problem
+                </button>
+              </div>
             </header>
+
+            {activeTest && (
+              <TestBanner
+                job={activeTest}
+                onUndo={handleUndoTest}
+                onConfirmDelete={handleConfirmDelete}
+                isLoading={testLoading}
+              />
+            )}
 
             <DriveSummary
               entries={state.entries}
@@ -188,6 +342,8 @@ function App() {
               onSelectItem={(item) => {
                 setState(prev => ({ ...prev, selectedItem: item, selectedNode: null }))
               }}
+              onTestRemoval={handleTestRemoval}
+              testActive={activeTest !== null}
             />
 
             <TreeView

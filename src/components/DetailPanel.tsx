@@ -31,7 +31,7 @@ export default function DetailPanel({
   }
 
   return (
-    <div className="w-96 bg-white border-l flex flex-col overflow-hidden">
+    <div className="w-96 bg-white border-l flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b flex items-start justify-between">
         <div className="flex-1 min-w-0">

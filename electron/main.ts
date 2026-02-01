@@ -6,6 +6,8 @@ import { validatePath } from './services/pathValidator'
 import { logAudit, logProblemReport } from './services/auditLog'
 import { askClaudeAI } from './services/claude'
 import { webResearch } from './services/webResearch'
+import { disableItems, restoreItems, deleteDisabledItems, getActiveTest } from './services/removalService'
+import { saveSession, loadSession, clearSession } from './services/sessionService'
 import { v4 as uuidv4 } from 'uuid'
 
 // Session ID for audit logging
@@ -130,4 +132,36 @@ ipcMain.handle('web-research', async (_event, pathToResearch: string) => {
 
 ipcMain.handle('submit-report', async (_event, report) => {
   await logProblemReport(report)
+})
+
+// Removal test handlers
+
+ipcMain.handle('disable-items', async (_event, entries) => {
+  return disableItems(entries)
+})
+
+ipcMain.handle('restore-items', async (_event, job) => {
+  return restoreItems(job)
+})
+
+ipcMain.handle('delete-disabled-items', async (_event, job) => {
+  return deleteDisabledItems(job)
+})
+
+ipcMain.handle('get-active-test', async () => {
+  return getActiveTest()
+})
+
+// Session management handlers
+
+ipcMain.handle('save-session', async (_event, csvFilePath: string, entries, recommendations) => {
+  return saveSession(csvFilePath, entries, recommendations)
+})
+
+ipcMain.handle('load-session', async () => {
+  return loadSession()
+})
+
+ipcMain.handle('clear-session', async () => {
+  return clearSession()
 })

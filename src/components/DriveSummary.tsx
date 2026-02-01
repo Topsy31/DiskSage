@@ -20,7 +20,7 @@ export default function DriveSummary({ entries, recommendations }: DriveSummaryP
   const usagePercent = Math.min(100, Math.max(0, (totalSize / (totalSize + potentialSavings)) * 100))
 
   return (
-    <div className="bg-white border-b px-6 py-4">
+    <div className="bg-white border-b px-6 py-4 flex-shrink-0">
       <div className="flex items-center justify-between mb-2">
         <div>
           <span className="text-gray-700 font-medium">

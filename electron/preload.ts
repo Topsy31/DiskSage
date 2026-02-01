@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem } from '../src/types'
+import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem, RemovalTestJob, RemovalTestItem } from '../src/types'
 
 const electronAPI = {
   selectCSVFile: (): Promise<string | null> => {
@@ -32,6 +32,36 @@ const electronAPI = {
 
   submitReport: (report: ProblemReport): Promise<void> => {
     return ipcRenderer.invoke('submit-report', report)
+  },
+
+  // Removal test API
+  disableItems: (entries: FileEntry[]): Promise<RemovalTestJob> => {
+    return ipcRenderer.invoke('disable-items', entries)
+  },
+
+  restoreItems: (job: RemovalTestJob): Promise<RemovalTestJob> => {
+    return ipcRenderer.invoke('restore-items', job)
+  },
+
+  deleteDisabledItems: (job: RemovalTestJob): Promise<{ deleted: number; bytesFreed: number; failed: RemovalTestItem[] }> => {
+    return ipcRenderer.invoke('delete-disabled-items', job)
+  },
+
+  getActiveTest: (): Promise<RemovalTestJob | null> => {
+    return ipcRenderer.invoke('get-active-test')
+  },
+
+  // Session management API
+  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[]): Promise<void> => {
+    return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations)
+  },
+
+  loadSession: (): Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; savedAt: string } | null> => {
+    return ipcRenderer.invoke('load-session')
+  },
+
+  clearSession: (): Promise<void> => {
+    return ipcRenderer.invoke('clear-session')
   }
 }
 

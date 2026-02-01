@@ -112,3 +112,24 @@ export interface AppState {
   isLoading: boolean;
   error: string | null;
 }
+
+// Removal test types
+export type RemovalTestPhase = 'selecting' | 'testing' | 'confirmed';
+
+export interface RemovalTestItem {
+  entry: FileEntry;
+  included: boolean;
+  originalPath: string;
+  renamedPath?: string;
+  status: 'pending' | 'renamed' | 'restored' | 'deleted' | 'failed';
+  error?: string;
+}
+
+export interface RemovalTestJob {
+  jobId: string;
+  items: RemovalTestItem[];
+  phase: RemovalTestPhase;
+  createdAt: string;
+  completedAt?: string;
+  totalBytes: number;
+}

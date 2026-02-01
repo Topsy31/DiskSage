@@ -2,64 +2,44 @@ import { useState, useCallback } from 'react'
 import type { FileEntry } from '../types'
 
 interface ImportPanelProps {
-  onImport: (entries: FileEntry[]) => void
+  onImport: (entries: FileEntry[], csvFilePath: string) => void
   isLoading: boolean
   error: string | null
 }
 
 export default function ImportPanel({ onImport, isLoading, error }: ImportPanelProps) {
-  const [isDragging, setIsDragging] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-  }, [])
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-    setLocalError(null)
-
-    const files = Array.from(e.dataTransfer.files)
-    const csvFile = files.find(f => f.name.endsWith('.csv'))
-
-    if (csvFile) {
-      // In Electron with contextIsolation, we can't get the path directly
-      // Instead, use the file dialog approach
-      setLocalError('Please use the "Browse Files" button to select your CSV file.')
-    } else {
-      setLocalError('Please drop a CSV file.')
-    }
-  }, [])
+  const [parsingStatus, setParsingStatus] = useState<string | null>(null)
 
   const handleFileSelect = useCallback(async () => {
     setLocalError(null)
+    setParsingStatus(null)
 
     try {
-      // Use Electron's dialog API via IPC
       const filePath = await window.electronAPI.selectCSVFile()
 
       if (filePath) {
+        setParsingStatus('Reading CSV file...')
+
         const entries = await window.electronAPI.parseCSV(filePath)
+
         if (entries && entries.length > 0) {
-          onImport(entries)
+          setParsingStatus(`Found ${entries.length.toLocaleString()} folders. Analysing...`)
+          onImport(entries, filePath)
         } else {
           setLocalError('No entries found in CSV file. Make sure this is a WizTree export.')
+          setParsingStatus(null)
         }
       }
     } catch (err) {
       console.error('Import error:', err)
       setLocalError(err instanceof Error ? err.message : 'Failed to import CSV file')
+      setParsingStatus(null)
     }
   }, [onImport])
 
   const displayError = error || localError
+  const showLoading = isLoading || parsingStatus
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -71,34 +51,34 @@ export default function ImportPanel({ onImport, isLoading, error }: ImportPanelP
           Export your disk analysis from WizTree as CSV, then import it here.
         </p>
 
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-            isDragging
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-gray-400'
-          }`}
-        >
-          {isLoading ? (
-            <div className="space-y-2">
-              <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto" />
-              <p className="text-gray-600">Analysing...</p>
+        <div className="border-2 border-gray-200 rounded-lg p-8 text-center bg-gray-50">
+          {showLoading ? (
+            <div className="space-y-4">
+              <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full mx-auto" />
+              <div>
+                <p className="text-gray-700 font-medium">
+                  {parsingStatus || 'Analysing...'}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  This may take a moment for large drives
+                </p>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="text-4xl text-gray-400">
-                CSV
+              <div className="text-5xl text-gray-300">
+                <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
               </div>
               <p className="text-gray-600">
-                Click the button below to select your WizTree CSV file
+                Select your WizTree CSV export file
               </p>
               <button
                 onClick={handleFileSelect}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                className="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
-                Browse Files
+                Select CSV File
               </button>
             </div>
           )}
