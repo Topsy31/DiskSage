@@ -2,15 +2,34 @@ import fs from 'fs'
 import readline from 'readline'
 import type { FileEntry } from '../../src/types'
 
+interface FolderNode {
+  path: string
+  size: number
+  files: number
+  folders: number
+  modified: Date
+  children: Map<string, FolderNode>
+}
+
 /**
- * Parse a WizTree CSV export file using streaming to handle large files.
- * WizTree CSV format: "File Name","Size","Allocated","Modified","Attributes","Files","Folders"
+ * Parse a WizTree CSV export file using streaming.
+ * Aggregates to folder level during parse - handles millions of rows efficiently.
  */
 export async function parseWizTreeCSV(filePath: string): Promise<FileEntry[]> {
-  const entries: FileEntry[] = []
-  let isFirstLine = true
+  const MIN_SIZE_BYTES = 10 * 1024 * 1024 // 10MB minimum to include in results
+
+  // Root node for the tree
+  const root: FolderNode = {
+    path: '',
+    size: 0,
+    files: 0,
+    folders: 0,
+    modified: new Date(0),
+    children: new Map()
+  }
+
   let lineCount = 0
-  const maxEntries = 5000 // Limit to top entries to avoid memory issues
+  let skippedCount = 0
 
   return new Promise((resolve, reject) => {
     const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' })
@@ -19,6 +38,8 @@ export async function parseWizTreeCSV(filePath: string): Promise<FileEntry[]> {
       crlfDelay: Infinity
     })
 
+    let isFirstLine = true
+
     rl.on('line', (line) => {
       // Skip header
       if (isFirstLine) {
@@ -26,80 +47,178 @@ export async function parseWizTreeCSV(filePath: string): Promise<FileEntry[]> {
         return
       }
 
-      // Limit entries to prevent memory issues
-      if (entries.length >= maxEntries) {
-        return
-      }
-
       lineCount++
 
+      // Log progress every 100k lines
+      if (lineCount % 100000 === 0) {
+        console.log(`Parsed ${lineCount} lines...`)
+      }
+
       try {
-        const entry = parseLine(line)
-        if (entry && entry.size > 0) {
-          entries.push(entry)
+        const parsed = parseLine(line)
+        if (parsed) {
+          // Add this entry to the tree (sizes accumulated per-node)
+          addToTree(root, parsed.path, parsed.size, parsed.modified)
         }
       } catch (err) {
-        // Skip malformed lines silently
+        skippedCount++
       }
     })
 
     rl.on('close', () => {
-      // Sort by size descending and take top entries
-      entries.sort((a, b) => b.size - a.size)
-      console.log(`Parsed ${lineCount} lines, returning ${entries.length} entries`)
+      console.log(`Finished parsing ${lineCount} lines (${skippedCount} skipped)`)
+
+      // Now propagate sizes up from leaves to parents (single pass)
+      propagateSizes(root)
+
+      // Convert tree to flat list of significant folders
+      const entries = flattenTree(root, MIN_SIZE_BYTES)
+
+      console.log(`Returning ${entries.length} folder entries >= ${formatSize(MIN_SIZE_BYTES)}`)
       resolve(entries)
     })
 
-    rl.on('error', (err) => {
-      reject(err)
-    })
-
-    fileStream.on('error', (err) => {
-      reject(err)
-    })
+    rl.on('error', reject)
+    fileStream.on('error', reject)
   })
 }
 
 /**
- * Parse a single CSV line.
- * Handles quoted fields and commas within paths.
+ * Add a file/folder to the tree. Does NOT propagate sizes yet.
  */
-function parseLine(line: string): FileEntry | null {
+function addToTree(root: FolderNode, path: string, size: number, modified: Date): void {
+  // Normalise path
+  const normPath = path.replace(/\\$/, '')
+  const parts = normPath.split('\\').filter(p => p)
+
+  if (parts.length === 0) return
+
+  let current = root
+  let currentPath = ''
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+
+    // Build path
+    if (i === 0 && part.match(/^[A-Z]:$/i)) {
+      currentPath = part
+    } else {
+      currentPath = currentPath ? currentPath + '\\' + part : part
+    }
+
+    // Get or create child node
+    let child = current.children.get(part.toLowerCase())
+    if (!child) {
+      child = {
+        path: currentPath,
+        size: 0,
+        files: 0,
+        folders: 0,
+        modified: new Date(0),
+        children: new Map()
+      }
+      current.children.set(part.toLowerCase(), child)
+    }
+
+    // If this is the final segment (the actual entry), record its size
+    if (i === parts.length - 1) {
+      // Use max in case we see the same path multiple times
+      child.size = Math.max(child.size, size)
+      child.files++
+      if (modified > child.modified) {
+        child.modified = modified
+      }
+    }
+
+    current = child
+  }
+}
+
+/**
+ * Recalculate sizes from children (post-order traversal).
+ * Called ONCE after all entries are added.
+ */
+function propagateSizes(node: FolderNode): number {
+  if (node.children.size === 0) {
+    // Leaf node - return its own size
+    return node.size
+  }
+
+  // Sum children's sizes
+  let childSum = 0
+  for (const child of node.children.values()) {
+    childSum += propagateSizes(child)
+  }
+
+  // Use the larger of: direct size (from CSV) or sum of children
+  // WizTree sometimes reports folder totals directly
+  node.size = Math.max(node.size, childSum)
+  node.folders = node.children.size
+
+  return node.size
+}
+
+/**
+ * Flatten tree to array, only including folders above size threshold.
+ */
+function flattenTree(root: FolderNode, minSize: number): FileEntry[] {
+  const results: FileEntry[] = []
+
+  function traverse(node: FolderNode) {
+    // Only include if above threshold and has a path
+    if (node.size >= minSize && node.path) {
+      results.push({
+        path: node.path,
+        size: node.size,
+        allocated: node.size,
+        modified: node.modified,
+        attributes: '',
+        files: node.files,
+        folders: node.folders
+      })
+    }
+
+    // Always traverse children (they might be large even if parent isn't filtered)
+    for (const child of node.children.values()) {
+      traverse(child)
+    }
+  }
+
+  traverse(root)
+
+  // Sort by size descending
+  results.sort((a, b) => b.size - a.size)
+
+  return results
+}
+
+/**
+ * Parse a single CSV line.
+ */
+function parseLine(line: string): { path: string; size: number; modified: Date } | null {
   const fields = parseCSVLine(line)
 
-  if (fields.length < 5) {
+  if (fields.length < 4) {
     return null
   }
 
-  const [path, sizeStr, allocatedStr, modifiedStr, attributes, filesStr, foldersStr] = fields
+  const [path, sizeStr, , modifiedStr] = fields
 
-  // Skip header or invalid rows
-  if (path === 'File Name' || !path) {
+  if (!path || path === 'File Name') {
     return null
   }
 
-  // Clean up the path - remove surrounding quotes
   const cleanPath = path.replace(/^"|"$/g, '')
-
-  // Skip individual files, only process folders (folders have Files/Folders counts)
-  // WizTree exports folders with file/folder counts
-  const files = filesStr ? parseInt(filesStr, 10) : undefined
-  const folders = foldersStr ? parseInt(foldersStr, 10) : undefined
-
-  // If no files or folders count, this might be a file not a folder - skip small items
   const size = parseSize(sizeStr)
-  if (size < 1024 * 1024) { // Skip items smaller than 1MB
+
+  if (size <= 0) {
     return null
   }
 
   return {
     path: cleanPath,
     size,
-    allocated: parseSize(allocatedStr),
-    modified: parseDate(modifiedStr),
-    attributes: attributes || '',
-    files,
-    folders
+    modified: parseDate(modifiedStr)
   }
 }
 
@@ -116,7 +235,6 @@ function parseCSVLine(line: string): string[] {
 
     if (char === '"') {
       if (inQuotes && line[i + 1] === '"') {
-        // Escaped quote
         current += '"'
         i++
       } else {
@@ -135,7 +253,7 @@ function parseCSVLine(line: string): string[] {
 }
 
 /**
- * Parse size value (WizTree uses plain numbers in bytes).
+ * Parse size value.
  */
 function parseSize(sizeStr: string): number {
   const cleaned = sizeStr.replace(/[",]/g, '')
@@ -144,13 +262,12 @@ function parseSize(sizeStr: string): number {
 }
 
 /**
- * Parse date from WizTree format (DD/MM/YYYY HH:mm:ss or similar).
+ * Parse date from WizTree format.
  */
 function parseDate(dateStr: string): Date {
-  const cleaned = dateStr.replace(/"/g, '').trim()
+  if (!dateStr) return new Date()
 
-  // Try common formats
-  // WizTree typically uses: DD/MM/YYYY HH:mm:ss
+  const cleaned = dateStr.replace(/"/g, '').trim()
   const match = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/)
 
   if (match) {
@@ -165,7 +282,6 @@ function parseDate(dateStr: string): Date {
     )
   }
 
-  // Fallback: try native parsing
   const date = new Date(cleaned)
   return isNaN(date.getTime()) ? new Date() : date
 }

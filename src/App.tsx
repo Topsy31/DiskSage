@@ -4,6 +4,7 @@ import { buildTree } from './utils/treeBuilder'
 import SafetyIntro from './components/SafetyIntro'
 import ImportPanel from './components/ImportPanel'
 import DriveSummary from './components/DriveSummary'
+import QuickWins from './components/QuickWins'
 import TreeView from './components/TreeView'
 import DetailPanel from './components/DetailPanel'
 import ReportProblem from './components/ReportProblem'
@@ -180,6 +181,13 @@ function App() {
             <DriveSummary
               entries={state.entries}
               recommendations={state.recommendations}
+            />
+
+            <QuickWins
+              recommendations={state.recommendations}
+              onSelectItem={(item) => {
+                setState(prev => ({ ...prev, selectedItem: item, selectedNode: null }))
+              }}
             />
 
             <TreeView
