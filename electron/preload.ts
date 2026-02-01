@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem } from '../src/types'
 
 const electronAPI = {
+  selectCSVFile: (): Promise<string | null> => {
+    return ipcRenderer.invoke('select-csv-file')
+  },
+
   parseCSV: (filePath: string): Promise<FileEntry[]> => {
     return ipcRenderer.invoke('parse-csv', filePath)
   },

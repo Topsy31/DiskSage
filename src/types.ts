@@ -43,6 +43,17 @@ export interface RecommendationItem {
   potentialSavings: number;
 }
 
+// Tree node for hierarchical view
+export interface TreeNode {
+  name: string;
+  path: string;
+  size: number;
+  children: TreeNode[];
+  classification?: Classification;
+  isExpanded?: boolean;
+  depth: number;
+}
+
 // Audit log entry
 export interface AuditEntry {
   timestamp: string;
@@ -95,6 +106,8 @@ export interface AppState {
   safetyConfirmed: boolean;
   entries: FileEntry[];
   recommendations: RecommendationItem[];
+  tree: TreeNode | null;
+  selectedNode: TreeNode | null;
   selectedItem: RecommendationItem | null;
   isLoading: boolean;
   error: string | null;

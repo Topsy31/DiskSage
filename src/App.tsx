@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react'
-import { AppState, FileEntry, RecommendationItem } from './types'
+import { useState, useCallback, useMemo } from 'react'
+import { AppState, FileEntry, RecommendationItem, TreeNode } from './types'
+import { buildTree } from './utils/treeBuilder'
 import SafetyIntro from './components/SafetyIntro'
 import ImportPanel from './components/ImportPanel'
 import DriveSummary from './components/DriveSummary'
-import RecommendationList from './components/RecommendationList'
+import TreeView from './components/TreeView'
 import DetailPanel from './components/DetailPanel'
 import ReportProblem from './components/ReportProblem'
 
@@ -12,6 +13,8 @@ const initialState: AppState = {
   safetyConfirmed: false,
   entries: [],
   recommendations: [],
+  tree: null,
+  selectedNode: null,
   selectedItem: null,
   isLoading: false,
   error: null
@@ -30,10 +33,24 @@ function App() {
 
     try {
       const recommendations = await window.electronAPI.analyzeEntries(entries)
+
+      // Build a lookup map for classifications
+      const classificationMap = new Map<string, RecommendationItem>()
+      for (const rec of recommendations) {
+        classificationMap.set(rec.entry.path.toLowerCase(), rec)
+      }
+
+      // Build tree with classification lookup
+      const tree = buildTree(entries, (path) => {
+        const rec = classificationMap.get(path.toLowerCase())
+        return rec?.classification
+      })
+
       setState(prev => ({
         ...prev,
         entries,
         recommendations,
+        tree,
         phase: 'results',
         isLoading: false
       }))
@@ -46,9 +63,18 @@ function App() {
     }
   }, [])
 
-  const handleSelectItem = useCallback((item: RecommendationItem | null) => {
-    setState(prev => ({ ...prev, selectedItem: item }))
-  }, [])
+  const handleSelectNode = useCallback((node: TreeNode) => {
+    // Find matching recommendation
+    const rec = state.recommendations.find(
+      r => r.entry.path.toLowerCase() === node.path.toLowerCase()
+    )
+
+    setState(prev => ({
+      ...prev,
+      selectedNode: node,
+      selectedItem: rec || null
+    }))
+  }, [state.recommendations])
 
   const handleOpenInExplorer = useCallback((path: string) => {
     window.electronAPI.openInExplorer(path)
@@ -83,11 +109,9 @@ function App() {
     setState(prev => ({ ...prev, isLoading: true }))
     try {
       const result = await window.electronAPI.webResearch(item.entry.path)
-      // Update the item with web research results
       setState(prev => ({
         ...prev,
         isLoading: false
-        // Web research results would be stored separately or merged into classification
       }))
       return result
     } catch (err) {
@@ -98,6 +122,33 @@ function App() {
       }))
     }
   }, [])
+
+  // Create a pseudo-RecommendationItem for selected node if we don't have one
+  const selectedItem = useMemo(() => {
+    if (state.selectedItem) return state.selectedItem
+    if (!state.selectedNode) return null
+
+    // Create a basic item from the node
+    return {
+      entry: {
+        path: state.selectedNode.path,
+        size: state.selectedNode.size,
+        allocated: state.selectedNode.size,
+        modified: new Date(),
+        attributes: ''
+      },
+      classification: state.selectedNode.classification || {
+        riskScore: 3 as const,
+        confidence: 'low' as const,
+        category: 'Unknown',
+        recommendation: 'Needs investigation',
+        explanation: 'This folder was not recognised. Use "Ask AI" or investigate manually.',
+        source: 'offline-rule' as const,
+        warnings: []
+      },
+      potentialSavings: state.selectedNode.size
+    }
+  }, [state.selectedItem, state.selectedNode])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -113,7 +164,7 @@ function App() {
         />
       )}
 
-      {state.phase === 'results' && (
+      {state.phase === 'results' && state.tree && (
         <div className="flex h-screen">
           <div className="flex-1 flex flex-col overflow-hidden">
             <header className="bg-white border-b px-6 py-4 flex justify-between items-center">
@@ -131,17 +182,17 @@ function App() {
               recommendations={state.recommendations}
             />
 
-            <RecommendationList
-              recommendations={state.recommendations}
-              selectedItem={state.selectedItem}
-              onSelect={handleSelectItem}
+            <TreeView
+              root={state.tree}
+              onSelectNode={handleSelectNode}
+              selectedPath={state.selectedNode?.path || null}
             />
           </div>
 
-          {state.selectedItem && (
+          {selectedItem && (
             <DetailPanel
-              item={state.selectedItem}
-              onClose={() => handleSelectItem(null)}
+              item={selectedItem}
+              onClose={() => setState(prev => ({ ...prev, selectedNode: null, selectedItem: null }))}
               onOpenInExplorer={handleOpenInExplorer}
               onAskAI={handleAskAI}
               onWebResearch={handleWebResearch}
@@ -151,9 +202,9 @@ function App() {
         </div>
       )}
 
-      {showReportModal && state.selectedItem && (
+      {showReportModal && selectedItem && (
         <ReportProblem
-          item={state.selectedItem}
+          item={selectedItem}
           onClose={() => setShowReportModal(false)}
           onSubmit={async (report) => {
             await window.electronAPI.submitReport(report)

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import path from 'path'
 import { parseWizTreeCSV } from './services/parser'
 import { analyzeEntries } from './services/analyzer'
@@ -26,10 +26,17 @@ function createWindow() {
   })
 
   // In development, load from Vite dev server
+  // vite-plugin-electron sets this automatically
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
+    // Production build
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+  }
+
+  // Open DevTools in development
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.webContents.openDevTools()
   }
 }
 
@@ -48,6 +55,23 @@ app.on('activate', () => {
 })
 
 // IPC Handlers
+
+ipcMain.handle('select-csv-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Select WizTree CSV Export',
+    filters: [
+      { name: 'CSV Files', extensions: ['csv'] },
+      { name: 'All Files', extensions: ['*'] }
+    ],
+    properties: ['openFile']
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
+})
 
 ipcMain.handle('parse-csv', async (_event, filePath: string) => {
   return parseWizTreeCSV(filePath)

@@ -9,6 +9,7 @@ interface ImportPanelProps {
 
 export default function ImportPanel({ onImport, isLoading, error }: ImportPanelProps) {
   const [isDragging, setIsDragging] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -23,36 +24,42 @@ export default function ImportPanel({ onImport, isLoading, error }: ImportPanelP
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
+    setLocalError(null)
 
     const files = Array.from(e.dataTransfer.files)
     const csvFile = files.find(f => f.name.endsWith('.csv'))
 
     if (csvFile) {
-      const filePath = (csvFile as any).path
+      // In Electron with contextIsolation, we can't get the path directly
+      // Instead, use the file dialog approach
+      setLocalError('Please use the "Browse Files" button to select your CSV file.')
+    } else {
+      setLocalError('Please drop a CSV file.')
+    }
+  }, [])
+
+  const handleFileSelect = useCallback(async () => {
+    setLocalError(null)
+
+    try {
+      // Use Electron's dialog API via IPC
+      const filePath = await window.electronAPI.selectCSVFile()
+
       if (filePath) {
         const entries = await window.electronAPI.parseCSV(filePath)
-        onImport(entries)
+        if (entries && entries.length > 0) {
+          onImport(entries)
+        } else {
+          setLocalError('No entries found in CSV file. Make sure this is a WizTree export.')
+        }
       }
+    } catch (err) {
+      console.error('Import error:', err)
+      setLocalError(err instanceof Error ? err.message : 'Failed to import CSV file')
     }
   }, [onImport])
 
-  const handleFileSelect = useCallback(async () => {
-    // For simplicity, we'll use a file input
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.csv'
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (file) {
-        const filePath = (file as any).path
-        if (filePath) {
-          const entries = await window.electronAPI.parseCSV(filePath)
-          onImport(entries)
-        }
-      }
-    }
-    input.click()
-  }, [onImport])
+  const displayError = error || localError
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -85,9 +92,8 @@ export default function ImportPanel({ onImport, isLoading, error }: ImportPanelP
                 CSV
               </div>
               <p className="text-gray-600">
-                Drag and drop your WizTree CSV file here
+                Click the button below to select your WizTree CSV file
               </p>
-              <p className="text-gray-400 text-sm">or</p>
               <button
                 onClick={handleFileSelect}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
@@ -98,9 +104,9 @@ export default function ImportPanel({ onImport, isLoading, error }: ImportPanelP
           )}
         </div>
 
-        {error && (
+        {displayError && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
+            {displayError}
           </div>
         )}
 
@@ -108,7 +114,7 @@ export default function ImportPanel({ onImport, isLoading, error }: ImportPanelP
           <h3 className="font-medium text-gray-700 mb-2">How to export from WizTree:</h3>
           <ol className="list-decimal list-inside space-y-1">
             <li>Open WizTree and scan your drive</li>
-            <li>Click File → Export → Export to CSV</li>
+            <li>Click File, then Export, then Export to CSV</li>
             <li>Save the file and import it here</li>
           </ol>
         </div>

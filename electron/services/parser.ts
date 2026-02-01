@@ -1,33 +1,63 @@
-import fs from 'fs/promises'
+import fs from 'fs'
+import readline from 'readline'
 import type { FileEntry } from '../../src/types'
 
 /**
- * Parse a WizTree CSV export file.
+ * Parse a WizTree CSV export file using streaming to handle large files.
  * WizTree CSV format: "File Name","Size","Allocated","Modified","Attributes","Files","Folders"
  */
 export async function parseWizTreeCSV(filePath: string): Promise<FileEntry[]> {
-  const content = await fs.readFile(filePath, 'utf-8')
-  const lines = content.split('\n')
-
-  // Skip header row
   const entries: FileEntry[] = []
+  let isFirstLine = true
+  let lineCount = 0
+  const maxEntries = 5000 // Limit to top entries to avoid memory issues
 
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
+  return new Promise((resolve, reject) => {
+    const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' })
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity
+    })
 
-    try {
-      const entry = parseLine(line)
-      if (entry) {
-        entries.push(entry)
+    rl.on('line', (line) => {
+      // Skip header
+      if (isFirstLine) {
+        isFirstLine = false
+        return
       }
-    } catch (err) {
-      // Skip malformed lines
-      console.warn(`Skipping malformed line ${i + 1}:`, err)
-    }
-  }
 
-  return entries
+      // Limit entries to prevent memory issues
+      if (entries.length >= maxEntries) {
+        return
+      }
+
+      lineCount++
+
+      try {
+        const entry = parseLine(line)
+        if (entry && entry.size > 0) {
+          entries.push(entry)
+        }
+      } catch (err) {
+        // Skip malformed lines silently
+      }
+    })
+
+    rl.on('close', () => {
+      // Sort by size descending and take top entries
+      entries.sort((a, b) => b.size - a.size)
+      console.log(`Parsed ${lineCount} lines, returning ${entries.length} entries`)
+      resolve(entries)
+    })
+
+    rl.on('error', (err) => {
+      reject(err)
+    })
+
+    fileStream.on('error', (err) => {
+      reject(err)
+    })
+  })
 }
 
 /**
@@ -48,14 +78,28 @@ function parseLine(line: string): FileEntry | null {
     return null
   }
 
+  // Clean up the path - remove surrounding quotes
+  const cleanPath = path.replace(/^"|"$/g, '')
+
+  // Skip individual files, only process folders (folders have Files/Folders counts)
+  // WizTree exports folders with file/folder counts
+  const files = filesStr ? parseInt(filesStr, 10) : undefined
+  const folders = foldersStr ? parseInt(foldersStr, 10) : undefined
+
+  // If no files or folders count, this might be a file not a folder - skip small items
+  const size = parseSize(sizeStr)
+  if (size < 1024 * 1024) { // Skip items smaller than 1MB
+    return null
+  }
+
   return {
-    path: path.replace(/^"|"$/g, ''),
-    size: parseSize(sizeStr),
+    path: cleanPath,
+    size,
     allocated: parseSize(allocatedStr),
     modified: parseDate(modifiedStr),
     attributes: attributes || '',
-    files: filesStr ? parseInt(filesStr, 10) : undefined,
-    folders: foldersStr ? parseInt(foldersStr, 10) : undefined
+    files,
+    folders
   }
 }
 

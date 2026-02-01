@@ -1,6 +1,7 @@
 import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem } from './types'
 
 export interface ElectronAPI {
+  selectCSVFile: () => Promise<string | null>
   parseCSV: (filePath: string) => Promise<FileEntry[]>
   analyzeEntries: (entries: FileEntry[]) => Promise<RecommendationItem[]>
   validatePath: (path: string) => Promise<{ isValid: boolean; warnings: string[] }>
