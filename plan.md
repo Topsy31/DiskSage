@@ -50,12 +50,25 @@ Smart disk cleanup advisor that helps users identify space savings with appropri
 | **First experience** | Safety-first intro: backup reminder, confidence explanation |
 | **Explanation depth** | Progressive — summary first, details on expand |
 | **AI scope** | On-demand only, always with uncertainty language |
+| **Web research** | On-demand, curated sources only |
 | **UI polish** | Clean and readable |
 | **Defer to v2** | Export/report, multiple AI providers, settings UI |
 
 ---
 
 ## Safety Model (HIGH PRIORITY)
+
+### Triple-Source Verification
+
+DiskSage uses three sources of truth, each with different trust levels:
+
+| Source | Trust Level | Max Confidence | When Used |
+|--------|-------------|----------------|-----------|
+| **Offline Rules** | Highest | High | Known patterns, well-documented folders |
+| **Web Research** | Medium | High (if consensus) | On-demand, curated sources |
+| **AI Inference** | Lowest | Medium (capped) | On-demand, unknown items |
+
+When sources agree, confidence increases. When they disagree, flag prominently.
 
 ### Dual-Axis Classification
 
@@ -116,7 +129,8 @@ Every session shows:
 12. **One-line recommendation** — with appropriate uncertainty
 13. **Expandable detail panel** — plain-English explanation
 14. **"Ask AI" button** — for unknown items, with uncertainty
-15. **Open in Explorer** — button to navigate to folder
+15. **"Research Online" button** — curated web search for validation
+16. **Open in Explorer** — button to navigate to folder
 
 ### Won't Have (v1)
 
@@ -140,6 +154,7 @@ Every session shows:
 │  ├── Drive summary bar                                       │
 │  ├── Recommendation list (sortable, filterable)             │
 │  ├── Detail panel (expandable explanations)                 │
+│  ├── Web research results panel                              │
 │  ├── Review summary screen                                   │
 │  └── Report problem modal                                    │
 ├─────────────────────────────────────────────────────────────┤
@@ -147,6 +162,7 @@ Every session shows:
 │  ├── WizTree CSV parser                                     │
 │  ├── Path validator (junctions, symlinks, OneDrive)         │
 │  ├── Offline rule engine (with confidence)                  │
+│  ├── Web research engine (curated sources)                  │
 │  ├── Audit logger                                            │
 │  ├── Path anonymiser                                        │
 │  └── Claude API adapter (with uncertainty prompting)        │
@@ -169,9 +185,9 @@ Every session shows:
 
 | Level | Meaning | When Applied |
 |-------|---------|--------------|
-| **High** | Pattern matches exactly, well-understood folder | Known Windows paths, standard caches |
-| **Medium** | Pattern matches but edge cases possible | User folders, app data |
-| **Low** | Uncertain classification | Unknown apps, ambiguous paths, AI inference |
+| **High** | Pattern matches exactly, well-understood folder, or web consensus | Known Windows paths, standard caches, multiple sources agree |
+| **Medium** | Pattern matches but edge cases possible, or single source | User folders, app data, AI inference |
+| **Low** | Uncertain classification | Unknown apps, ambiguous paths, sources disagree |
 
 ---
 
@@ -188,6 +204,141 @@ Every session shows:
 | Risk 3, any | "Review required — could contain important data" |
 | Risk 4, any | "Backup first — likely contains personal files" |
 | Risk 5, any | "Do not delete — system or application files" |
+
+---
+
+## Web Research Integration (HIGH PRIORITY)
+
+### Design Principles
+
+1. **On-demand only** — User explicitly clicks "Research Online" button
+2. **Curated sources** — Only query trusted sites, not general web
+3. **Surface findings, don't decide** — Show what was found, let user interpret
+4. **Highlight disagreement** — If sources conflict, flag prominently
+5. **Cache results** — Same folder pattern doesn't need repeat searches
+6. **Surface edge cases** — Actively look for "but be careful if..." warnings
+
+### Trusted Source Whitelist
+
+| Domain | Type | Trust Level | Why Trusted |
+|--------|------|-------------|-------------|
+| `docs.microsoft.com` | Official | Highest | Microsoft's own documentation |
+| `learn.microsoft.com` | Official | Highest | Microsoft Learn platform |
+| `support.microsoft.com` | Official | Highest | Microsoft support articles |
+| `answers.microsoft.com` | Official | High | Microsoft community (moderated) |
+| `superuser.com` | Community | High | Stack Exchange, moderated, voted |
+| `serverfault.com` | Community | High | Stack Exchange for IT pros |
+| `bleepingcomputer.com` | Expert | High | Established, security-focused |
+| `howtogeek.com` | Expert | Medium | Established, consumer-focused |
+| `tenforums.com` | Community | Medium | Windows-specific, active moderation |
+
+### Search Strategy
+
+For a folder like `C:\Windows\Installer`:
+
+```
+Query: "Windows Installer folder" safe to delete site:docs.microsoft.com OR site:superuser.com OR site:bleepingcomputer.com
+```
+
+**Parse results for:**
+- Explicit "safe to delete" / "do not delete" statements
+- Mentions of consequences
+- Recommended tools or procedures
+- Edge cases and warnings (actively seek these)
+
+### Edge Case Detection
+
+Research specifically looks for phrases like:
+- "but be careful if..."
+- "exception when..."
+- "do not delete if..."
+- "may cause issues with..."
+- "only safe if..."
+- "make sure first..."
+
+**These get highlighted as warnings even if overall consensus is "safe."**
+
+### Implementation
+
+```typescript
+interface WebResearchResult {
+  query: string;
+  sources: SourceResult[];
+  consensus: 'safe' | 'dangerous' | 'conditional' | 'conflicting' | 'insufficient';
+  edgeCases: string[];  // Warnings found in sources
+  confidenceAdjustment: -1 | 0 | 1;
+  summary: string;
+  cachedAt: string;
+}
+
+interface SourceResult {
+  domain: string;
+  title: string;
+  url: string;
+  snippet: string;
+  trustLevel: 'official' | 'expert' | 'community';
+  sentiment: 'safe' | 'dangerous' | 'conditional' | 'neutral';
+  votes?: number;  // For Stack Exchange
+  warnings?: string[];  // Edge cases mentioned
+}
+
+const TRUSTED_DOMAINS = [
+  { domain: 'docs.microsoft.com', trustLevel: 'official', weight: 3 },
+  { domain: 'learn.microsoft.com', trustLevel: 'official', weight: 3 },
+  { domain: 'support.microsoft.com', trustLevel: 'official', weight: 3 },
+  { domain: 'answers.microsoft.com', trustLevel: 'official', weight: 2 },
+  { domain: 'superuser.com', trustLevel: 'community', weight: 2 },
+  { domain: 'serverfault.com', trustLevel: 'community', weight: 2 },
+  { domain: 'bleepingcomputer.com', trustLevel: 'expert', weight: 2 },
+  { domain: 'howtogeek.com', trustLevel: 'expert', weight: 1 },
+  { domain: 'tenforums.com', trustLevel: 'community', weight: 1 },
+];
+```
+
+### Consensus Calculation
+
+```typescript
+function calculateConsensus(sources: SourceResult[]): ConsensusResult {
+  // Weight by trust level
+  let safeWeight = 0;
+  let dangerWeight = 0;
+
+  for (const source of sources) {
+    const weight = TRUSTED_DOMAINS.find(d => source.domain.includes(d.domain))?.weight || 1;
+    if (source.sentiment === 'safe') safeWeight += weight;
+    if (source.sentiment === 'dangerous') dangerWeight += weight;
+  }
+
+  // Check for edge cases in any source
+  const hasEdgeCases = sources.some(s => s.warnings && s.warnings.length > 0);
+
+  if (sources.length < 2) return { consensus: 'insufficient', adjustment: 0 };
+  if (safeWeight > 0 && dangerWeight > 0) return { consensus: 'conflicting', adjustment: -1 };
+  if (hasEdgeCases) return { consensus: 'conditional', adjustment: 0 };
+  if (safeWeight > dangerWeight * 2) return { consensus: 'safe', adjustment: 1 };
+  if (dangerWeight > safeWeight * 2) return { consensus: 'dangerous', adjustment: 0 };
+
+  return { consensus: 'conditional', adjustment: 0 };
+}
+```
+
+### Confidence Adjustment from Web Research
+
+| Scenario | Confidence Effect |
+|----------|-------------------|
+| Multiple official sources agree "safe" | Can upgrade to High |
+| Multiple sources agree "dangerous" | Upgrade risk score |
+| Edge cases found | Add warnings, keep confidence |
+| Sources disagree | Downgrade to Low, flag "Conflicting" |
+| No relevant results | No change, note "Limited info online" |
+| Official Microsoft guidance found | Weight heavily |
+
+### Caching
+
+- **Cache key:** Anonymised path pattern (not full path)
+- **Cache duration:** 7 days
+- **Cache location:** `%APPDATA%\DiskSage\research-cache.json`
+- **Cache invalidation:** Manual clear option in UI
 
 ---
 
@@ -404,7 +555,7 @@ Be conservative. When in doubt, recommend "investigate further" rather than "del
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ ● Unknown: Power Automate Data            2.1 GB    [>]  │   │
 │  │   Risk: Unknown  |  Confidence: Low                      │   │
-│  │   Needs investigation — [Ask AI]                         │   │
+│  │   Needs investigation — [Ask AI] [Research Online]       │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐   │
@@ -416,7 +567,7 @@ Be conservative. When in doubt, recommend "investigate further" rather than "del
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Expanded Detail Panel
+### Expanded Detail Panel with Web Research
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -427,6 +578,8 @@ Be conservative. When in doubt, recommend "investigate further" rather than "del
 │ Risk: Medium ●●●○○   Confidence: Medium                          │
 │ Recommendation: Requires special tool                            │
 │                                                                  │
+│ [Ask AI]  [Research Online]                                      │
+│                                                                  │
 │ ─── WHAT IS THIS? ───────────────────────────────────────────── │
 │                                                                  │
 │ When Windows and programs update, they save old update files    │
@@ -435,11 +588,28 @@ Be conservative. When in doubt, recommend "investigate further" rather than "del
 │                                                                  │
 │ Your folder: 1,133 files, mostly .msp files from 2017-2026      │
 │                                                                  │
-│ ─── WARNING ─────────────────────────────────────────────────── │
+│ ─── WEB RESEARCH RESULTS ────────────────────────────────────── │
 │                                                                  │
-│ ⚠ Do NOT delete files from this folder directly.                │
-│ ⚠ Microsoft explicitly warns against manual deletion.           │
-│ ⚠ Wrong deletion can break application repair/uninstall.        │
+│ Found 4 relevant sources (cached 2 days ago):                   │
+│                                                                  │
+│ ✓ Microsoft Support (official)                                  │
+│   "Do not manually delete files from the Windows Installer      │
+│   folder. Doing so can prevent programs from running..."        │
+│   → support.microsoft.com/kb/2276496                            │
+│                                                                  │
+│ ✓ Super User (community, 127 votes)                              │
+│   "Use PatchCleaner or similar tools. Never delete directly."   │
+│   → superuser.com/questions/707767                              │
+│                                                                  │
+│ ✓ BleepingComputer (expert)                                      │
+│   "Orphaned MSI/MSP files can be removed with care using..."    │
+│   → bleepingcomputer.com/forums/t/629647                        │
+│                                                                  │
+│ ⚠ CONSENSUS: Do not delete directly. Use specialised tool.      │
+│                                                                  │
+│ ⚠ EDGE CASES FOUND:                                              │
+│   • "Be careful if you have pending Windows updates"            │
+│   • "Some applications may break if wrong files removed"        │
 │                                                                  │
 │ ─── IF YOU DELETE INCORRECTLY ───────────────────────────────── │
 │                                                                  │
@@ -507,9 +677,10 @@ interface AuditEntry {
   riskScore: number;
   confidence: 'high' | 'medium' | 'low';
   recommendation: string;
-  source: 'offline-rule' | 'ai';
+  source: 'offline-rule' | 'ai' | 'web-research';
   ruleId?: string;
   aiResponse?: string;
+  webResearchSummary?: string;
 }
 ```
 
@@ -579,6 +750,8 @@ DiskSage/
 │       ├── pathValidator.ts # Junction/symlink/OneDrive detection
 │       ├── analyzer.ts      # Rule engine with confidence
 │       ├── rules.ts         # Rule definitions
+│       ├── webResearch.ts   # Curated web search
+│       ├── researchCache.ts # Research result caching
 │       ├── auditLog.ts      # Local audit logging
 │       └── claude.ts        # Claude API adapter
 │
@@ -592,11 +765,13 @@ DiskSage/
 │   │   ├── RecommendationList.tsx
 │   │   ├── RecommendationCard.tsx
 │   │   ├── DetailPanel.tsx
+│   │   ├── WebResearchPanel.tsx
 │   │   ├── RiskBadge.tsx
 │   │   ├── ConfidenceBadge.tsx
 │   │   └── ReportProblem.tsx
 │   ├── hooks/
-│   │   └── useAnalysis.ts
+│   │   ├── useAnalysis.ts
+│   │   └── useWebResearch.ts
 │   ├── types.ts
 │   └── styles.css
 │
@@ -640,13 +815,22 @@ DiskSage/
 - [ ] Recommendation list with sorting/filtering
 - [ ] Expandable detail cards
 
-### Phase 5: AI Integration (~30 min)
+### Phase 5: Web Research (~45 min)
+- [ ] Web search with site restriction
+- [ ] Result parsing and sentiment detection
+- [ ] Edge case extraction
+- [ ] Consensus calculation
+- [ ] Cache implementation
+- [ ] "Research Online" button in UI
+- [ ] Research results display panel
+
+### Phase 6: AI Integration (~30 min)
 - [ ] Path anonymiser
 - [ ] Uncertainty-first prompt
 - [ ] AI response capped at Medium confidence
 - [ ] "AI suggests..." framing
 
-### Phase 6: Testing & Polish (~30 min)
+### Phase 7: Testing & Polish (~30 min)
 - [ ] Test on own WizTree export
 - [ ] Test on at least one other machine's export
 - [ ] Error handling
@@ -663,12 +847,14 @@ DiskSage/
 3. **Language never implies certainty** — No "safe to delete" anywhere
 4. **Audit log captures all recommendations** — Complete record exists
 5. **All negative test cases pass** — Rules don't match what they shouldn't
+6. **Web research surfaces edge cases** — Warnings shown even when consensus is "safe"
 
 ### Functional Criteria
 
-6. **Works on my disk** — Correctly analyses my WizTree export
-7. **Identifies wins** — Shows potential savings with appropriate caveats
-8. **Feels trustworthy** — Conservative tone builds appropriate caution
+7. **Works on my disk** — Correctly analyses my WizTree export
+8. **Identifies wins** — Shows potential savings with appropriate caveats
+9. **Feels trustworthy** — Conservative tone builds appropriate caution
+10. **Web research adds value** — Provides useful context beyond offline rules
 
 ---
 
@@ -682,3 +868,4 @@ DiskSage/
 - Direct disk scan without WizTree
 - Multi-drive support
 - Locale detection and localised folder matching
+- Automatic web research for all Medium confidence items
