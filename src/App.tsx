@@ -29,50 +29,56 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>('explore')
   const [markedPaths, setMarkedPaths] = useState<Set<string>>(new Set())
 
-  // Load active test and previous session on mount
+  // Load active test on mount (but don't auto-navigate)
   useEffect(() => {
-    // Load active test
     window.electronAPI.getActiveTest().then(test => {
       if (test) {
         setActiveTest(test)
-        // If there's an active test, switch to marked tab
-        setActiveTab('marked')
-      }
-    })
-
-    // Load previous session
-    window.electronAPI.loadSession().then(session => {
-      if (session) {
-        // Build a lookup map for classifications
-        const classificationMap = new Map<string, RecommendationItem>()
-        for (const rec of session.recommendations) {
-          classificationMap.set(rec.entry.path.toLowerCase(), rec)
-        }
-
-        // Build tree with classification lookup
-        const tree = buildTree(session.entries, (path) => {
-          const rec = classificationMap.get(path.toLowerCase())
-          return rec?.classification
-        })
-
-        setCsvFilePath(session.csvFilePath)
-
-        // Load marked paths if stored
-        if (session.markedPaths && session.markedPaths.length > 0) {
-          setMarkedPaths(new Set(session.markedPaths))
-        }
-
-        setState(prev => ({
-          ...prev,
-          entries: session.entries,
-          recommendations: session.recommendations,
-          tree,
-          phase: 'results',
-          safetyConfirmed: true
-        }))
       }
     })
   }, [])
+
+  // Function to load previous session when user chooses to continue
+  const loadPreviousSession = useCallback(async () => {
+    const session = await window.electronAPI.loadSession()
+    if (session) {
+      // Build a lookup map for classifications
+      const classificationMap = new Map<string, RecommendationItem>()
+      for (const rec of session.recommendations) {
+        classificationMap.set(rec.entry.path.toLowerCase(), rec)
+      }
+
+      // Build tree with classification lookup
+      const tree = buildTree(session.entries, (path) => {
+        const rec = classificationMap.get(path.toLowerCase())
+        return rec?.classification
+      })
+
+      setCsvFilePath(session.csvFilePath)
+
+      // Load marked paths if stored
+      if (session.markedPaths && session.markedPaths.length > 0) {
+        setMarkedPaths(new Set(session.markedPaths))
+      }
+
+      // If there's an active test, switch to marked tab
+      if (activeTest) {
+        setActiveTab('marked')
+      }
+
+      setState(prev => ({
+        ...prev,
+        entries: session.entries,
+        recommendations: session.recommendations,
+        tree,
+        phase: 'results',
+        safetyConfirmed: true
+      }))
+
+      return true
+    }
+    return false
+  }, [activeTest])
 
   const handleScanComplete = useCallback(async (entries: FileEntry[], source: string) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
@@ -338,7 +344,8 @@ function App() {
       {state.phase === 'start' && (
         <StartScreen
           onScanComplete={handleScanComplete}
-          onBack={state.entries.length > 0 ? handleBack : undefined}
+          onContinueSession={loadPreviousSession}
+          hasActiveTest={!!activeTest}
           isLoading={state.isLoading}
           error={state.error}
         />

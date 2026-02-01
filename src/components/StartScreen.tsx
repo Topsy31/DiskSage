@@ -12,19 +12,21 @@ interface ScanTarget {
 
 interface StartScreenProps {
   onScanComplete: (entries: FileEntry[], source: string) => void
-  onBack?: () => void
+  onContinueSession?: () => Promise<boolean>
+  hasActiveTest?: boolean
   isLoading: boolean
   error: string | null
 }
 
-export default function StartScreen({ onScanComplete, onBack, isLoading, error }: StartScreenProps) {
+export default function StartScreen({ onScanComplete, onContinueSession, hasActiveTest, isLoading, error }: StartScreenProps) {
   const [targets, setTargets] = useState<ScanTarget[]>([])
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
   const [scanProgress, setScanProgress] = useState<{ current: string; scanned: number; total: number } | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
   const [mode, setMode] = useState<'choose' | 'scanning' | 'csv'>('choose')
+  const [hasPreviousSession, setHasPreviousSession] = useState(false)
 
-  // Load available scan targets
+  // Load available scan targets and check for previous session
   useEffect(() => {
     window.electronAPI.getScanTargets().then(availableTargets => {
       setTargets(availableTargets)
@@ -36,6 +38,11 @@ export default function StartScreen({ onScanComplete, onBack, isLoading, error }
         }
       }
       setSelectedTargets(defaultSelected)
+    })
+
+    // Check if there's a previous session
+    window.electronAPI.loadSession().then(session => {
+      setHasPreviousSession(!!session)
     })
 
     // Listen for scan progress
@@ -163,25 +170,54 @@ export default function StartScreen({ onScanComplete, onBack, isLoading, error }
     )
   }
 
+  const handleContinueSession = async () => {
+    if (onContinueSession) {
+      setMode('scanning')
+      setScanProgress({ current: 'Loading previous session...', scanned: 0, total: 1 })
+      await onContinueSession()
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-lg max-w-3xl w-full p-8">
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="text-sm text-gray-500 hover:text-gray-700 mb-4 flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to results
-          </button>
-        )}
-
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">DiskSage</h1>
           <p className="text-gray-600">Find and safely remove unnecessary files</p>
         </div>
+
+        {/* Continue Previous Session Banner */}
+        {hasPreviousSession && onContinueSession && (
+          <div className={`mb-6 p-4 rounded-lg border-2 ${hasActiveTest ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <svg className={`w-6 h-6 ${hasActiveTest ? 'text-amber-600' : 'text-green-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <div className={`font-medium ${hasActiveTest ? 'text-amber-800' : 'text-green-800'}`}>
+                    {hasActiveTest ? 'Active Test in Progress' : 'Previous Session Available'}
+                  </div>
+                  <div className={`text-sm ${hasActiveTest ? 'text-amber-600' : 'text-green-600'}`}>
+                    {hasActiveTest
+                      ? 'You have files being tested for removal. Continue to review or undo.'
+                      : 'Continue where you left off with your previous scan results.'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={handleContinueSession}
+                className={`px-4 py-2 rounded-lg font-medium ${
+                  hasActiveTest
+                    ? 'bg-amber-600 text-white hover:bg-amber-700'
+                    : 'bg-green-600 text-white hover:bg-green-700'
+                }`}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid md:grid-cols-2 gap-6">
           {/* Quick Scan Panel */}

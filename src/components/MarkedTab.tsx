@@ -53,6 +53,25 @@ export default function MarkedTab({
     onTestRemoval(entriesToTest)
   }
 
+  // Get items from active test if one is in progress
+  const activeTestItems = useMemo(() => {
+    if (!activeTest) return []
+
+    return activeTest.items.map(item => {
+      const rec = recommendations.find(r => r.entry.path.toLowerCase() === item.originalPath.toLowerCase())
+      return {
+        entry: item.entry,
+        recommendation: rec,
+        testItem: item
+      }
+    }).sort((a, b) => b.entry.size - a.entry.size)
+  }, [activeTest, recommendations])
+
+  // Calculate total size for active test
+  const activeTestTotalSize = useMemo(() => {
+    return activeTestItems.reduce((sum, item) => sum + item.entry.size, 0)
+  }, [activeTestItems])
+
   if (markedItems.length === 0 && !activeTest) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-500 p-8">
@@ -75,7 +94,7 @@ export default function MarkedTab({
           <div className="flex items-start justify-between">
             <div>
               <h3 className="font-medium text-amber-800">
-                Testing removal: {activeTest.items.length} items disabled
+                Testing removal: {activeTest.items.length} item{activeTest.items.length !== 1 ? 's' : ''} disabled ({formatSize(activeTestTotalSize)})
               </h3>
               <p className="text-sm text-amber-700 mt-1">
                 Use your system normally. If something breaks, click "Undo All" to restore.
@@ -133,15 +152,29 @@ export default function MarkedTab({
       {/* Items list */}
       <div className="flex-1 overflow-y-auto">
         <div className="divide-y">
-          {markedItems.map(({ entry, recommendation }) => (
-            <MarkedItem
-              key={entry.path}
-              entry={entry}
-              recommendation={recommendation}
-              onUnmark={() => onUnmark(entry.path)}
-              disabled={activeTest !== null}
-            />
-          ))}
+          {activeTest ? (
+            // Show items from active test
+            activeTestItems.map(({ entry, recommendation, testItem }) => (
+              <TestItem
+                key={entry.path}
+                entry={entry}
+                recommendation={recommendation}
+                status={testItem.status}
+                renamedPath={testItem.renamedPath}
+              />
+            ))
+          ) : (
+            // Show marked items
+            markedItems.map(({ entry, recommendation }) => (
+              <MarkedItem
+                key={entry.path}
+                entry={entry}
+                recommendation={recommendation}
+                onUnmark={() => onUnmark(entry.path)}
+                disabled={false}
+              />
+            ))
+          )}
         </div>
       </div>
 
@@ -200,6 +233,65 @@ function MarkedItem({ entry, recommendation, onUnmark, disabled }: MarkedItemPro
             </svg>
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+interface TestItemProps {
+  entry: FileEntry
+  recommendation?: RecommendationItem
+  status: 'pending' | 'renamed' | 'restored' | 'deleted' | 'failed'
+  renamedPath?: string
+}
+
+function TestItem({ entry, recommendation, status, renamedPath }: TestItemProps) {
+  const folderName = entry.path.split('\\').pop() || entry.path
+  const classification = recommendation?.classification
+
+  const statusColors = {
+    pending: 'bg-gray-100 text-gray-600',
+    renamed: 'bg-amber-100 text-amber-700',
+    restored: 'bg-green-100 text-green-700',
+    deleted: 'bg-red-100 text-red-700',
+    failed: 'bg-red-100 text-red-700'
+  }
+
+  const statusLabels = {
+    pending: 'Pending',
+    renamed: 'Disabled',
+    restored: 'Restored',
+    deleted: 'Deleted',
+    failed: 'Failed'
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-gray-800 truncate">{folderName}</span>
+          {classification && <RiskBadge score={classification.riskScore} />}
+          <span className={`px-2 py-0.5 text-xs rounded ${statusColors[status]}`}>
+            {statusLabels[status]}
+          </span>
+        </div>
+        <p className="text-sm text-gray-500 truncate" title={entry.path}>
+          {entry.path}
+        </p>
+        {status === 'renamed' && renamedPath && (
+          <p className="text-xs text-amber-600 truncate mt-0.5" title={renamedPath}>
+            Renamed to: {renamedPath.split('\\').pop()}
+          </p>
+        )}
+        {classification && (
+          <p className="text-sm text-gray-600 mt-0.5">
+            {classification.recommendation}
+          </p>
+        )}
+      </div>
+
+      <div className="text-right flex-shrink-0">
+        <div className="font-medium text-gray-700">{formatSize(entry.size)}</div>
       </div>
     </div>
   )
