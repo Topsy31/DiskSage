@@ -4,6 +4,53 @@ Smart disk cleanup advisor that helps users identify space savings with appropri
 
 ---
 
+## Current Scope (Updated)
+
+> **Note:** This section reflects the actual implemented state. See `HISTORY.md` for development timeline and rationale for changes from original specification.
+
+### Implemented Features (Beyond Original Spec)
+
+| Feature | Original Spec | Current Implementation |
+|---------|---------------|------------------------|
+| **Action scope** | Recommendations only | Test Removal + Permanent Delete |
+| **Input method** | WizTree CSV only | Quick Scan + WizTree CSV |
+| **UI structure** | Single scrolling list | Three-tab layout (Explore, By Risk, Marked) |
+| **Session persistence** | Not specified | Full session restore |
+| **Backup mechanism** | User responsibility | Configurable backup location + in-situ rename |
+
+### Test Removal Feature
+
+Instead of "recommendations only", DiskSage now provides safe deletion through reversibility:
+
+1. **Mark items** — User selects items for deletion across Explore/By Risk tabs
+2. **Select backup location** — User chooses where to preserve files (persisted across sessions)
+3. **Test Removal** — Files copied to backup, then renamed with `.disksage-backup` suffix
+4. **Verify** — User tests system functionality with items disabled
+5. **Undo or Confirm** — Restore items if problems occur, or permanently delete (backups remain)
+
+**Safety guarantees:**
+- Configurable backup location with space validation
+- Manifest written BEFORE any renames (crash recovery)
+- Instant undo capability at any time during test
+- Nothing permanently deleted without explicit confirmation
+- Backups preserved indefinitely for manual recovery
+
+### Quick Scan Feature
+
+Direct scanning of common cleanup locations:
+- Windows Temp, User Temp
+- Browser caches (Chrome, Firefox, Edge)
+- Development caches (node_modules, npm, NuGet, pip)
+- Downloads folder
+
+---
+
+## Original Specification
+
+> **The sections below represent the original design intent. Some aspects have been superseded by the "Current Scope" section above.**
+
+---
+
 ## Safety Philosophy
 
 **Core principle:** This app could cause real harm. A wrong recommendation leading to data loss is not an acceptable outcome. Every design decision must prioritise user safety over convenience.
@@ -861,11 +908,346 @@ DiskSage/
 ## Future (v2+)
 
 - Multiple AI providers (OpenAI, Ollama)
-- Settings UI for API keys
 - Export recommendations as report
 - Problem report aggregation and rule improvement
 - Community-contributed test cases
-- Direct disk scan without WizTree
 - Multi-drive support
 - Locale detection and localised folder matching
 - Automatic web research for all Medium confidence items
+
+---
+
+## AI Advisor Feature — Implementation Plan
+
+### Context
+
+A manual disk cleanup guided by Claude recovered ~150 GB. The biggest wins came from system-level actions (DISM, cleanmgr, hibernation), app-specific caches (Raspberry Pi Imager 872 MB, WebEx versions 278 MB, Claude Code old versions 219 MB), and developer caches. DiskSage currently classifies individual folders via 33 offline rules and lets users mark/delete them, but has no strategic layer — it doesn't look at the whole picture and suggest a plan of attack.
+
+This plan adds an **AI Advisor tab** that sends the full scan summary to Claude, receives a structured cleanup plan categorised by action type, and lets the user act on each recommendation — either within DiskSage or by copying commands to run manually.
+
+The AI service (`claude.ts`) is currently a stub returning placeholder responses. The settings service only stores backup location. All three Electron wrapper files (main.ts, preload.ts, electron.d.ts) need new IPC channels.
+
+### Design Decisions
+
+- **Claude API only** — no multi-provider abstraction for now
+- **System actions shown as commands to copy** — DiskSage recommends and explains, user runs in PowerShell
+- **New "Advisor" tab** — fourth tab alongside Explore, By Risk, Marked
+- **Settings panel** — modal dialog for API key entry (previously deferred to v2)
+
+---
+
+### Step 1: Install Anthropic SDK
+
+**File:** `package.json`
+
+- Add `"@anthropic-ai/sdk": "^0.39.0"` to `dependencies`
+- Run `npm install`
+
+---
+
+### Step 2: Add New Types
+
+**File:** `src/types.ts`
+
+Add at the end of the file:
+
+```typescript
+// AI Advisor types
+export interface SystemAction {
+  id: string
+  name: string
+  command: string
+  explanation: string
+  estimatedSavings: string
+  riskLevel: 'low' | 'medium' | 'high'
+}
+
+export interface AdvisorItemReference {
+  path: string
+  size: number
+  reason: string
+}
+
+export interface AdvisorCategory {
+  type: 'disksage' | 'system' | 'investigate' | 'external'
+  title: string
+  description: string
+  items?: AdvisorItemReference[]
+  actions?: SystemAction[]
+  guidance?: string
+  totalSize?: number
+}
+
+export interface AdvisorPlan {
+  categories: AdvisorCategory[]
+  summary: string
+  createdAt: string
+}
+```
+
+---
+
+### Step 3: Create System Actions Catalogue
+
+**File:** `electron/services/systemActions.ts` (NEW)
+
+Hardcoded catalogue of known Windows cleanup actions the AI can reference:
+
+| ID | Action | Est. Savings |
+|---|---|---|
+| `dism-cleanup` | DISM Component Store (conservative) | 2-10 GB |
+| `dism-resetbase` | DISM Component Store (aggressive) | 5-20 GB |
+| `disk-cleanup` | Windows Disk Cleanup utility | 5-30 GB |
+| `hibernation-off` | Disable hibernation (deletes hiberfil.sys) | 8-32 GB |
+| `temp-cleanup` | Clear Windows + User temp folders | 0.5-5 GB |
+| `npm-cache-clear` | npm cache clean | 0.5-5 GB |
+| `pip-cache-purge` | pip cache purge | 0.5-3 GB |
+| `nuget-cache-clear` | dotnet nuget locals all --clear | 0.5-3 GB |
+
+Each entry has: `id`, `name`, `command` (PowerShell), `explanation`, `estimatedSavings`, `riskLevel`.
+
+Export: `SYSTEM_ACTIONS` record and `getAllSystemActions()` helper.
+
+---
+
+### Step 4: Extend Settings Service
+
+**File:** `electron/services/settingsService.ts`
+
+- Add `claudeApiKey: string | null` to `AppSettings` interface and `DEFAULT_SETTINGS`
+- Add `getClaudeApiKey()` and `setClaudeApiKey()` helper functions (same pattern as backup location)
+
+---
+
+### Step 5: Replace Claude Service Stub with Real Implementation
+
+**File:** `electron/services/claude.ts`
+
+Replace the entire file. Key changes:
+
+**`askClaudeAI(entry)` — existing per-item function:**
+- Check for API key via `getClaudeApiKey()` — return "not configured" classification if missing
+- Instantiate `Anthropic` client with key
+- Call `client.messages.create()` with existing `buildPrompt()` (model: `claude-sonnet-4-20250514`)
+- Parse response with existing `parseClaudeResponse()` (confidence capped at medium)
+- Error handling: return graceful error classification
+
+**`getAdvisorPlan(entries, totalSize)` — new advisor function:**
+- Check for API key — throw if missing
+- Sort entries by size, take top 50
+- Anonymise all paths via existing `anonymisePath()`
+- Build advisor prompt (see Prompt Design below)
+- Call Claude with `max_tokens: 4096`
+- Parse structured JSON response
+- Map system action IDs to full `SystemAction` objects from catalogue
+- Calculate `totalSize` per category
+- Return `AdvisorPlan`
+
+**Advisor Prompt Design:**
+- Sends: scan summary (total items, total size) + top 50 folders (anonymised path, size, modified date)
+- Requests JSON response with 4 categories:
+  - `disksage`: items with paths and reasons (for marking in DiskSage)
+  - `system`: action IDs referencing the catalogue (for PowerShell commands)
+  - `investigate`: items needing manual review (AI explains what it thinks each is)
+  - `external`: guidance text (duplicate detection, app uninstalls, etc.)
+- Constraints: use only catalogue action IDs for system category; be conservative; put uncertain items in investigate
+
+**Keep:** `anonymisePath()`, `parseClaudeResponse()`, `extractRecommendation()`, `formatSize()`, `guessFileTypes()` — these existing helpers stay, with `anonymisePath` and `parseClaudeResponse` reused.
+
+---
+
+### Step 6: Extend Session Service
+
+**File:** `electron/services/sessionService.ts`
+
+- Add `advisorPlan?: AdvisorPlan | null` to `SessionData` interface
+- Update `saveSession()` signature to accept optional `advisorPlan` parameter
+- `loadSession()` already returns the full object, so it will include `advisorPlan` automatically
+
+---
+
+### Step 7: Update Electron Main Process
+
+**File:** `electron/main.ts`
+
+Add imports:
+- `getAdvisorPlan` from `./services/claude`
+- `getClaudeApiKey`, `setClaudeApiKey` from `./services/settingsService`
+
+Add 3 new IPC handlers:
+- `'get-advisor-plan'` → calls `getAdvisorPlan(entries, totalSize)`
+- `'get-claude-api-key'` → calls `getClaudeApiKey()`
+- `'set-claude-api-key'` → calls `setClaudeApiKey(apiKey)`
+
+Update existing handler:
+- `'save-session'` → add `advisorPlan` as 5th parameter, pass through to `saveSession()`
+
+---
+
+### Step 8: Update Electron Preload Bridge
+
+**File:** `electron/preload.ts`
+
+Add import of `AdvisorPlan` type.
+
+Add 3 new methods to `electronAPI` object:
+- `getAdvisorPlan: (entries, totalSize) => ipcRenderer.invoke('get-advisor-plan', entries, totalSize)`
+- `getClaudeApiKey: () => ipcRenderer.invoke('get-claude-api-key')`
+- `setClaudeApiKey: (apiKey) => ipcRenderer.invoke('set-claude-api-key', apiKey)`
+
+Update existing method:
+- `saveSession` — add `advisorPlan?: AdvisorPlan | null` as 5th parameter
+- `loadSession` return type — add `advisorPlan?: AdvisorPlan | null`
+
+---
+
+### Step 9: Update Type Declarations
+
+**File:** `src/electron.d.ts`
+
+Add `AdvisorPlan` to the import from `./types`.
+
+Add to `ElectronAPI` interface:
+- `getAdvisorPlan: (entries: FileEntry[], totalSize: number) => Promise<AdvisorPlan>`
+- `getClaudeApiKey: () => Promise<string | null>`
+- `setClaudeApiKey: (apiKey: string | null) => Promise<void>`
+
+Update:
+- `saveSession` signature — add `advisorPlan?: AdvisorPlan | null`
+- `loadSession` return type — add `advisorPlan?: AdvisorPlan | null`
+
+---
+
+### Step 10: Update TabContainer
+
+**File:** `src/components/TabContainer.tsx`
+
+Change `TabId` type to: `'explore' | 'by-risk' | 'marked' | 'advisor'`
+
+No other changes needed — the component is already data-driven via the `tabs` prop.
+
+---
+
+### Step 11: Create Settings Panel Component
+
+**File:** `src/components/SettingsPanel.tsx` (NEW)
+
+Modal dialog for API key entry:
+- Input field for Claude API key (placeholder: `sk-ant-...`)
+- Validation: key must start with `sk-ant-` if provided
+- Loads existing key on mount (displays masked: `sk-ant-api...last4`)
+- Save/Cancel/Clear buttons
+- Success/error feedback
+- Link to console.anthropic.com for getting a key
+
+Props: `onClose: () => void`
+
+---
+
+### Step 12: Create Advisor Tab Component
+
+**File:** `src/components/AdvisorTab.tsx` (NEW)
+
+Three states:
+
+**State 1 — No API key:** Prompt to configure key, button opens SettingsPanel.
+
+**State 2 — Ready (no plan yet):** "Generate Cleanup Plan" button with scan summary. Note that top 50 folders will be sent (anonymised).
+
+**State 3 — Plan displayed:** Structured view with collapsible category cards:
+
+- **Category A (green) — "DiskSage Can Handle":** List of items with size, reason. Per-item "Mark" button. Bulk "Mark All" button that calls `onMarkForDeletion` with all paths.
+- **Category B (blue) — "System Actions":** Cards with action name, explanation, estimated savings, risk badge. Dark code block showing the command. "Copy Command" button using clipboard API.
+- **Category C (amber) — "Investigate":** Items with AI's assessment of what each likely is. "Open in Explorer" button.
+- **Category D (grey) — "External Tools":** Guidance text block.
+
+Header shows AI's summary in a blue info box. "Regenerate" button to re-run.
+
+Props:
+```typescript
+entries: FileEntry[]
+recommendations: RecommendationItem[]
+advisorPlan: AdvisorPlan | null
+advisorLoading: boolean
+hasApiKey: boolean
+onGeneratePlan: () => Promise<void>
+onMarkForDeletion: (paths: string[]) => void
+onOpenInExplorer: (path: string) => void
+onOpenSettings: () => void
+```
+
+---
+
+### Step 13: Update App.tsx
+
+**File:** `src/App.tsx`
+
+**New imports:** `AdvisorPlan`, `AdvisorTab`, `SettingsPanel`
+
+**New state:**
+- `advisorPlan: AdvisorPlan | null` (init: null)
+- `advisorLoading: boolean` (init: false)
+- `hasApiKey: boolean` (init: false)
+- `showSettings: boolean` (init: false)
+
+**New useEffect:** On mount, check for API key: `getClaudeApiKey().then(key => setHasApiKey(!!key))`
+
+**Update `loadPreviousSession`:** Restore `advisorPlan` from session if present.
+
+**Update `handleScanComplete`:** Clear `advisorPlan` to null on new scan.
+
+**Update `tabs` array:** Add `{ id: 'advisor', label: 'Advisor' }` as 4th tab.
+
+**New handler `handleGenerateAdvisorPlan`:**
+- Set `advisorLoading = true`
+- Call `window.electronAPI.getAdvisorPlan(state.entries, totalSize)`
+- Set `advisorPlan` with result
+- Save to session via `saveSession` with plan
+- Set `advisorLoading = false`
+- Error handling: set `state.error`
+
+**New handler `handleOpenSettings` / `handleCloseSettings`:**
+- Toggle `showSettings`
+- On close, recheck API key
+
+**Update header:** Add "Settings" button before "New Scan"
+
+**Add AdvisorTab render:** In TabContainer children, add `{activeTab === 'advisor' && <AdvisorTab ... />}`
+
+**Add SettingsPanel render:** After error toast, add `{showSettings && <SettingsPanel onClose={handleCloseSettings} />}`
+
+---
+
+### Verification
+
+1. `npm install` — confirm `@anthropic-ai/sdk` installs
+2. `npm run dev` — app starts, no TypeScript errors
+3. Navigate to Advisor tab with no API key — shows "Configure API Key" prompt
+4. Open Settings, enter valid API key, save — key persists
+5. Advisor tab now shows "Generate Cleanup Plan" — click it
+6. Claude API call succeeds, plan renders with 4 categories
+7. Click "Mark All" on Category A items — items appear in Marked tab
+8. Click "Copy Command" on a system action — command copies to clipboard
+9. Close and reopen app — advisor plan restored from session
+10. Click "New Scan" — advisor plan cleared
+11. Re-import CSV, generate new plan — fresh analysis
+
+---
+
+### Files Modified (Summary)
+
+| File | Change |
+|---|---|
+| `package.json` | Add @anthropic-ai/sdk dependency |
+| `src/types.ts` | Add AdvisorPlan, AdvisorCategory, SystemAction, AdvisorItemReference types |
+| `electron/services/systemActions.ts` | **NEW** — system actions catalogue |
+| `electron/services/settingsService.ts` | Add claudeApiKey to AppSettings |
+| `electron/services/claude.ts` | Replace stub with real Anthropic API + advisor prompt |
+| `electron/services/sessionService.ts` | Add advisorPlan to SessionData + saveSession |
+| `electron/main.ts` | Add 3 IPC handlers, update save-session handler |
+| `electron/preload.ts` | Add 3 bridge methods, update saveSession + loadSession |
+| `src/electron.d.ts` | Add 3 API methods, update saveSession + loadSession types |
+| `src/components/TabContainer.tsx` | Add 'advisor' to TabId union |
+| `src/components/SettingsPanel.tsx` | **NEW** — API key settings modal |
+| `src/components/AdvisorTab.tsx` | **NEW** — advisor tab with 4 category cards |
+| `src/App.tsx` | Add advisor state, settings state, 4th tab, handlers |

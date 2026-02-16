@@ -1,13 +1,14 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { app } from 'electron'
-import type { FileEntry, RecommendationItem } from '../../src/types'
+import type { FileEntry, RecommendationItem, AdvisorPlan } from '../../src/types'
 
 interface SessionData {
   csvFilePath: string
   entries: FileEntry[]
   recommendations: RecommendationItem[]
   markedPaths?: string[]
+  advisorPlan?: AdvisorPlan | null
   savedAt: string
 }
 
@@ -34,7 +35,8 @@ export async function saveSession(
   csvFilePath: string,
   entries: FileEntry[],
   recommendations: RecommendationItem[],
-  markedPaths?: string[]
+  markedPaths?: string[],
+  advisorPlan?: AdvisorPlan | null
 ): Promise<void> {
   await ensureDir()
   const sessionPath = getSessionPath()
@@ -44,6 +46,7 @@ export async function saveSession(
     entries,
     recommendations,
     markedPaths,
+    advisorPlan,
     savedAt: new Date().toISOString()
   }
 

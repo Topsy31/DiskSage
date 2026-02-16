@@ -13,12 +13,13 @@ interface ScanTarget {
 interface StartScreenProps {
   onScanComplete: (entries: FileEntry[], source: string) => void
   onContinueSession?: () => Promise<boolean>
+  onFindDuplicates?: () => void
   hasActiveTest?: boolean
   isLoading: boolean
   error: string | null
 }
 
-export default function StartScreen({ onScanComplete, onContinueSession, hasActiveTest, isLoading, error }: StartScreenProps) {
+export default function StartScreen({ onScanComplete, onContinueSession, onFindDuplicates, hasActiveTest, isLoading, error }: StartScreenProps) {
   const [targets, setTargets] = useState<ScanTarget[]>([])
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
   const [scanProgress, setScanProgress] = useState<{ current: string; scanned: number; total: number } | null>(null)
@@ -311,6 +312,28 @@ export default function StartScreen({ onScanComplete, onContinueSession, hasActi
             </button>
           </div>
         </div>
+
+        {/* Find Duplicates Panel */}
+        {onFindDuplicates && (
+          <div className="mt-6 border-2 border-gray-200 rounded-lg p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-6 h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <h2 className="text-lg font-semibold text-gray-900">Find Duplicates</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Scan a folder for duplicate media, documents, and archive files.
+              Application data and caches are excluded for safety.
+            </p>
+            <button
+              onClick={onFindDuplicates}
+              className="w-full py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200"
+            >
+              Find Duplicates
+            </button>
+          </div>
+        )}
 
         {/* Safety note */}
         <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">

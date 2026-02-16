@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem, RemovalTestJob, RemovalTestItem } from '../src/types'
+import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem, RemovalTestJob, RemovalTestItem, AdvisorPlan, DuplicateScanConfig, DuplicateScanResult, DuplicateScanProgress } from '../src/types'
 
 const electronAPI = {
   selectCSVFile: (): Promise<string | null> => {
@@ -35,8 +35,8 @@ const electronAPI = {
   },
 
   // Removal test API
-  disableItems: (entries: FileEntry[]): Promise<RemovalTestJob> => {
-    return ipcRenderer.invoke('disable-items', entries)
+  disableItems: (entries: FileEntry[], backupLocation?: string): Promise<RemovalTestJob> => {
+    return ipcRenderer.invoke('disable-items', entries, backupLocation)
   },
 
   restoreItems: (job: RemovalTestJob): Promise<RemovalTestJob> => {
@@ -52,11 +52,11 @@ const electronAPI = {
   },
 
   // Session management API
-  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[]): Promise<void> => {
-    return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations, markedPaths)
+  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[], advisorPlan?: AdvisorPlan | null): Promise<void> => {
+    return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations, markedPaths, advisorPlan)
   },
 
-  loadSession: (): Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; savedAt: string } | null> => {
+  loadSession: (): Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; advisorPlan?: AdvisorPlan | null; savedAt: string } | null> => {
     return ipcRenderer.invoke('load-session')
   },
 
@@ -83,6 +83,68 @@ const electronAPI = {
   onScanProgress: (callback: (progress: { current: string; scanned: number; total: number }) => void) => {
     ipcRenderer.on('scan-progress', (_event, progress) => callback(progress))
     return () => ipcRenderer.removeAllListeners('scan-progress')
+  },
+
+  // Backup location API
+  getBackupLocation: (): Promise<string | null> => {
+    return ipcRenderer.invoke('get-backup-location')
+  },
+
+  setBackupLocation: (location: string | null): Promise<void> => {
+    return ipcRenderer.invoke('set-backup-location', location)
+  },
+
+  selectBackupFolder: (): Promise<string | null> => {
+    return ipcRenderer.invoke('select-backup-folder')
+  },
+
+  getAvailableDiskSpace: (targetPath: string): Promise<number> => {
+    return ipcRenderer.invoke('get-available-disk-space', targetPath)
+  },
+
+  validateBackupLocation: (backupPath: string, requiredBytes: number, sourcePaths: string[]): Promise<{
+    isValid: boolean
+    availableSpace: number
+    requiredSpace: number
+    warning?: string
+    error?: string
+  }> => {
+    return ipcRenderer.invoke('validate-backup-location', backupPath, requiredBytes, sourcePaths)
+  },
+
+  // AI Advisor API
+  getAdvisorPlan: (entries: FileEntry[], totalSize: number): Promise<AdvisorPlan> => {
+    return ipcRenderer.invoke('get-advisor-plan', entries, totalSize)
+  },
+
+  getClaudeApiKey: (): Promise<string | null> => {
+    return ipcRenderer.invoke('get-claude-api-key')
+  },
+
+  setClaudeApiKey: (apiKey: string | null): Promise<void> => {
+    return ipcRenderer.invoke('set-claude-api-key', apiKey)
+  },
+
+  // Duplicate finder API
+  selectSourceFolder: (): Promise<string | null> => {
+    return ipcRenderer.invoke('select-source-folder')
+  },
+
+  getDefaultSkipFolders: (): Promise<string[]> => {
+    return ipcRenderer.invoke('get-default-skip-folders')
+  },
+
+  startDuplicateScan: (config: DuplicateScanConfig): Promise<DuplicateScanResult> => {
+    return ipcRenderer.invoke('start-duplicate-scan', config)
+  },
+
+  cancelDuplicateScan: (): Promise<void> => {
+    return ipcRenderer.invoke('cancel-duplicate-scan')
+  },
+
+  onDuplicateScanProgress: (callback: (progress: DuplicateScanProgress) => void) => {
+    ipcRenderer.on('duplicate-scan-progress', (_event, progress) => callback(progress))
+    return () => ipcRenderer.removeAllListeners('duplicate-scan-progress')
   }
 }
 

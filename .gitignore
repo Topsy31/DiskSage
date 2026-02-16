@@ -36,3 +36,12 @@ coverage/
 # Cache
 .eslintcache
 .cache/
+
+# Claude Code
+.claude/
+
+# Large data files
+assets/WizTree/
+
+# Temporary build outputs
+release-new/

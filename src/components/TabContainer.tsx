@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
 
-export type TabId = 'explore' | 'by-risk' | 'marked'
+export type TabId = 'explore' | 'by-risk' | 'marked' | 'advisor' | 'duplicates'
 
 interface Tab {
   id: TabId

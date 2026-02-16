@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { AppState, FileEntry, RecommendationItem, TreeNode, RemovalTestJob } from './types'
+import { AppState, FileEntry, RecommendationItem, TreeNode, RemovalTestJob, AdvisorPlan } from './types'
 import { buildTree } from './utils/treeBuilder'
 import StartScreen from './components/StartScreen'
 import ReportProblem from './components/ReportProblem'
@@ -7,6 +7,9 @@ import TabContainer, { TabId } from './components/TabContainer'
 import ExploreTab from './components/ExploreTab'
 import ByRiskTab from './components/ByRiskTab'
 import MarkedTab from './components/MarkedTab'
+import AdvisorTab from './components/AdvisorTab'
+import DuplicatesTab from './components/DuplicatesTab'
+import SettingsPanel from './components/SettingsPanel'
 
 const initialState: AppState = {
   phase: 'start',
@@ -28,13 +31,30 @@ function App() {
   const [csvFilePath, setCsvFilePath] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>('explore')
   const [markedPaths, setMarkedPaths] = useState<Set<string>>(new Set())
+  const [backupLocation, setBackupLocation] = useState<string | null>(null)
+  const [advisorPlan, setAdvisorPlan] = useState<AdvisorPlan | null>(null)
+  const [advisorLoading, setAdvisorLoading] = useState(false)
+  const [hasApiKey, setHasApiKey] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
-  // Load active test on mount (but don't auto-navigate)
+  // Load active test, backup location, and API key status on mount
   useEffect(() => {
     window.electronAPI.getActiveTest().then(test => {
       if (test) {
         setActiveTest(test)
       }
+    })
+
+    // Load saved backup location
+    window.electronAPI.getBackupLocation().then(location => {
+      if (location) {
+        setBackupLocation(location)
+      }
+    })
+
+    // Check for API key
+    window.electronAPI.getClaudeApiKey().then(key => {
+      setHasApiKey(!!key)
     })
   }, [])
 
@@ -59,6 +79,11 @@ function App() {
       // Load marked paths if stored
       if (session.markedPaths && session.markedPaths.length > 0) {
         setMarkedPaths(new Set(session.markedPaths))
+      }
+
+      // Restore advisor plan if it exists
+      if (session.advisorPlan) {
+        setAdvisorPlan(session.advisorPlan)
       }
 
       // If there's an active test, switch to marked tab
@@ -101,10 +126,11 @@ function App() {
       // Save session for persistence
       setCsvFilePath(source)
 
-      // Clear marked paths on new scan
+      // Clear marked paths and advisor plan on new scan
       setMarkedPaths(new Set())
+      setAdvisorPlan(null)
 
-      await window.electronAPI.saveSession(source, entries, recommendations, [])
+      await window.electronAPI.saveSession(source, entries, recommendations, [], null)
 
       setState(prev => ({
         ...prev,
@@ -123,12 +149,7 @@ function App() {
     }
   }, [])
 
-  const handleBack = useCallback(() => {
-    // Go back to results if we have data, otherwise stay on start
-    if (state.entries.length > 0) {
-      setState(prev => ({ ...prev, phase: 'results' }))
-    }
-  }, [state.entries.length])
+
 
   const handleSelectNode = useCallback((node: TreeNode | null) => {
     if (!node) {
@@ -192,6 +213,7 @@ function App() {
         error: err instanceof Error ? err.message : 'Web research failed',
         isLoading: false
       }))
+      return null
     }
   }, [])
 
@@ -228,11 +250,17 @@ function App() {
     setMarkedPaths(new Set())
   }, [])
 
+  // Backup location handler
+  const handleBackupLocationChange = useCallback((location: string | null) => {
+    setBackupLocation(location)
+  }, [])
+
   // Removal test handlers
-  const handleTestRemoval = useCallback(async (entries: FileEntry[]) => {
+  const handleTestRemoval = useCallback(async (entries: FileEntry[], backupLoc: string) => {
     setTestLoading(true)
     try {
-      const job = await window.electronAPI.disableItems(entries)
+      // Pass backup location to disableItems
+      const job = await window.electronAPI.disableItems(entries, backupLoc)
       setActiveTest(job)
     } catch (err) {
       setState(prev => ({
@@ -329,6 +357,47 @@ function App() {
     }
   }, [activeTest, csvFilePath, markedPaths])
 
+  // AI Advisor handlers
+  const handleGenerateAdvisorPlan = useCallback(async () => {
+    setAdvisorLoading(true)
+    setState(prev => ({ ...prev, error: null }))
+
+    try {
+      const plan = await window.electronAPI.getAdvisorPlan(state.entries, state.entries.reduce((sum, e) => sum + e.size, 0))
+      setAdvisorPlan(plan)
+
+      // Save plan to session
+      if (csvFilePath) {
+        await window.electronAPI.saveSession(
+          csvFilePath,
+          state.entries,
+          state.recommendations,
+          Array.from(markedPaths),
+          plan
+        )
+      }
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to generate advisor plan'
+      }))
+    } finally {
+      setAdvisorLoading(false)
+    }
+  }, [state.entries, state.recommendations, csvFilePath, markedPaths])
+
+  const handleOpenSettings = useCallback(() => {
+    setShowSettings(true)
+  }, [])
+
+  const handleCloseSettings = useCallback(() => {
+    setShowSettings(false)
+    // Recheck API key after settings close
+    window.electronAPI.getClaudeApiKey().then(key => {
+      setHasApiKey(!!key)
+    })
+  }, [])
+
   // Calculate total size
   const totalSize = state.entries.reduce((sum, e) => sum + e.size, 0)
 
@@ -336,7 +405,9 @@ function App() {
   const tabs = [
     { id: 'explore' as TabId, label: 'Explore' },
     { id: 'by-risk' as TabId, label: 'By Risk' },
-    { id: 'marked' as TabId, label: 'Marked', count: markedPaths.size }
+    { id: 'marked' as TabId, label: 'Marked', count: markedPaths.size },
+    { id: 'advisor' as TabId, label: 'Advisor' },
+    { id: 'duplicates' as TabId, label: 'Duplicates' }
   ]
 
   return (
@@ -345,13 +416,17 @@ function App() {
         <StartScreen
           onScanComplete={handleScanComplete}
           onContinueSession={loadPreviousSession}
+          onFindDuplicates={() => {
+            setState(prev => ({ ...prev, phase: 'results' }))
+            setActiveTab('duplicates')
+          }}
           hasActiveTest={!!activeTest}
           isLoading={state.isLoading}
           error={state.error}
         />
       )}
 
-      {state.phase === 'results' && state.tree && (
+      {state.phase === 'results' && (state.tree || activeTab === 'duplicates') && (
         <div className="flex flex-col h-screen">
           {/* Header */}
           <header className="bg-white border-b px-6 py-3 flex justify-between items-center flex-shrink-0">
@@ -362,6 +437,12 @@ function App() {
               </span>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={handleOpenSettings}
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                Settings
+              </button>
               <button
                 onClick={() => setState(prev => ({ ...prev, phase: 'start', selectedNode: null, selectedItem: null }))}
                 className="text-sm text-blue-600 hover:text-blue-800"
@@ -385,7 +466,7 @@ function App() {
           >
             {activeTab === 'explore' && (
               <ExploreTab
-                tree={state.tree}
+                tree={state.tree!}
                 recommendations={state.recommendations}
                 selectedNode={state.selectedNode}
                 onSelectNode={handleSelectNode}
@@ -403,11 +484,12 @@ function App() {
               <ByRiskTab
                 recommendations={state.recommendations}
                 onMarkForDeletion={handleMarkMultipleForDeletion}
-                onSelectItem={(item) => {
-                  setState(prev => ({ ...prev, selectedItem: item, selectedNode: null }))
-                  setActiveTab('explore')
-                }}
+                onUnmarkForDeletion={handleUnmarkForDeletion}
+                onOpenInExplorer={handleOpenInExplorer}
+                onAskAI={handleAskAI}
+                onWebResearch={handleWebResearch}
                 markedPaths={markedPaths}
+                isLoading={state.isLoading}
               />
             )}
 
@@ -418,6 +500,34 @@ function App() {
                 markedPaths={markedPaths}
                 onUnmark={handleUnmarkForDeletion}
                 onClearAll={handleClearAllMarked}
+                activeTest={activeTest}
+                onTestRemoval={handleTestRemoval}
+                onUndoTest={handleUndoTest}
+                onConfirmDelete={handleConfirmDelete}
+                isTestLoading={testLoading}
+                backupLocation={backupLocation}
+                onBackupLocationChange={handleBackupLocationChange}
+              />
+            )}
+
+            {activeTab === 'advisor' && (
+              <AdvisorTab
+                entries={state.entries}
+                recommendations={state.recommendations}
+                advisorPlan={advisorPlan}
+                advisorLoading={advisorLoading}
+                hasApiKey={hasApiKey}
+                onGeneratePlan={handleGenerateAdvisorPlan}
+                onMarkForDeletion={handleMarkMultipleForDeletion}
+                onOpenInExplorer={handleOpenInExplorer}
+                onOpenSettings={handleOpenSettings}
+              />
+            )}
+
+            {activeTab === 'duplicates' && (
+              <DuplicatesTab
+                backupLocation={backupLocation}
+                onBackupLocationChange={handleBackupLocationChange}
                 activeTest={activeTest}
                 onTestRemoval={handleTestRemoval}
                 onUndoTest={handleUndoTest}
@@ -450,6 +560,10 @@ function App() {
             Dismiss
           </button>
         </div>
+      )}
+
+      {showSettings && (
+        <SettingsPanel onClose={handleCloseSettings} />
       )}
     </div>
   )

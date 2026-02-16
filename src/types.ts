@@ -52,6 +52,7 @@ export interface TreeNode {
   classification?: Classification;
   isExpanded?: boolean;
   depth: number;
+  isRiskMatch?: boolean; // True if this node matches the current risk filter
 }
 
 // Audit log entry
@@ -121,7 +122,8 @@ export interface RemovalTestItem {
   included: boolean;
   originalPath: string;
   renamedPath?: string;
-  status: 'pending' | 'renamed' | 'restored' | 'deleted' | 'failed';
+  backupPath?: string;
+  status: 'pending' | 'renamed' | 'restored' | 'deleted' | 'failed' | 'backed-up';
   error?: string;
 }
 
@@ -132,4 +134,87 @@ export interface RemovalTestJob {
   createdAt: string;
   completedAt?: string;
   totalBytes: number;
+  backupLocation?: string;
+}
+
+// Backup validation result
+export interface BackupValidation {
+  isValid: boolean;
+  availableSpace: number;
+  requiredSpace: number;
+  warning?: string;
+  error?: string;
+}
+
+// AI Advisor types
+
+export interface SystemAction {
+  id: string;
+  name: string;
+  command: string;
+  explanation: string;
+  estimatedSavings: string;
+  riskLevel: 'low' | 'medium' | 'high';
+}
+
+export interface AdvisorItemReference {
+  path: string;
+  size: number;
+  reason: string;
+}
+
+export interface AdvisorCategory {
+  type: 'disksage' | 'system' | 'investigate' | 'external';
+  title: string;
+  description: string;
+  items?: AdvisorItemReference[];
+  actions?: SystemAction[];
+  guidance?: string;
+  totalSize?: number;
+}
+
+export interface AdvisorPlan {
+  categories: AdvisorCategory[];
+  summary: string;
+  createdAt: string;
+}
+
+// Duplicate finder types
+
+export interface DuplicateFile {
+  path: string;
+  modified: Date;
+  isKeeper: boolean;
+}
+
+export interface DuplicateGroup {
+  id: string;
+  hash: string;
+  fileSize: number;
+  files: DuplicateFile[];
+  keeperIndex: number;
+}
+
+export interface DuplicateScanConfig {
+  sourceFolder: string;
+  skipFolders: string[];
+  minFileSize: number;
+}
+
+export type DuplicateScanPhase = 'sizing' | 'partial-hash' | 'full-hash' | 'complete';
+
+export interface DuplicateScanProgress {
+  phase: DuplicateScanPhase;
+  filesScanned: number;
+  totalFiles: number;
+  candidatesFound: number;
+  duplicateGroupsFound: number;
+  currentFile?: string;
+}
+
+export interface DuplicateScanResult {
+  groups: DuplicateGroup[];
+  totalDuplicateSize: number;
+  scanDuration: number;
+  filesScanned: number;
 }

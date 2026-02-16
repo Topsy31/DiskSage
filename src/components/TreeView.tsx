@@ -7,15 +7,51 @@ interface TreeViewProps {
   root: TreeNode
   onSelectNode: (node: TreeNode) => void
   selectedPath: string | null
+  showExpandCollapseButton?: boolean
 }
 
-export default function TreeView({ root, onSelectNode, selectedPath }: TreeViewProps) {
+// Helper to collect all expandable paths from a tree
+function collectAllPaths(node: TreeNode, paths: Set<string>) {
+  if (node.children.length > 0) {
+    paths.add(node.path)
+    for (const child of node.children) {
+      collectAllPaths(child, paths)
+    }
+  }
+}
+
+export default function TreeView({ root, onSelectNode, selectedPath, showExpandCollapseButton = true }: TreeViewProps) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
     // Start with top-level folders expanded
     const initial = new Set<string>()
     initial.add(root.path)
     return initial
   })
+
+  // Check if all paths are expanded
+  const allPaths = useMemo(() => {
+    const paths = new Set<string>()
+    collectAllPaths(root, paths)
+    return paths
+  }, [root])
+
+  const isAllExpanded = useMemo(() => {
+    if (allPaths.size === 0) return false
+    for (const path of allPaths) {
+      if (!expandedPaths.has(path)) return false
+    }
+    return true
+  }, [allPaths, expandedPaths])
+
+  const toggleExpandAll = useCallback(() => {
+    if (isAllExpanded) {
+      // Collapse all except root
+      setExpandedPaths(new Set([root.path]))
+    } else {
+      // Expand all
+      setExpandedPaths(new Set(allPaths))
+    }
+  }, [isAllExpanded, allPaths, root.path])
 
   const toggleExpand = useCallback((path: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -38,6 +74,16 @@ export default function TreeView({ root, onSelectNode, selectedPath }: TreeViewP
     <div className="flex-1 overflow-y-auto">
       {/* Header */}
       <div className="sticky top-0 bg-gray-100 border-b px-4 py-2 flex items-center text-sm font-medium text-gray-600">
+        {showExpandCollapseButton && (
+          <button
+            onClick={toggleExpandAll}
+            className="mr-2 px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1"
+            title={isAllExpanded ? 'Collapse all folders' : 'Expand all folders'}
+          >
+            {isAllExpanded ? '▼' : '▶'}
+            <span>{isAllExpanded ? 'Collapse' : 'Expand'}</span>
+          </button>
+        )}
         <div className="flex-1">Folder</div>
         <div className="w-24 text-right">Size</div>
         <div className="w-32 text-right">Risk</div>

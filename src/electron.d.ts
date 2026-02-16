@@ -1,4 +1,4 @@
-import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem, RemovalTestJob, RemovalTestItem } from './types'
+import type { FileEntry, Classification, WebResearchResult, ProblemReport, RecommendationItem, RemovalTestJob, RemovalTestItem, BackupValidation, AdvisorPlan, DuplicateScanConfig, DuplicateScanResult, DuplicateScanProgress } from './types'
 
 export interface ElectronAPI {
   selectCSVFile: () => Promise<string | null>
@@ -11,14 +11,14 @@ export interface ElectronAPI {
   submitReport: (report: ProblemReport) => Promise<void>
 
   // Removal test API
-  disableItems: (entries: FileEntry[]) => Promise<RemovalTestJob>
+  disableItems: (entries: FileEntry[], backupLocation?: string) => Promise<RemovalTestJob>
   restoreItems: (job: RemovalTestJob) => Promise<RemovalTestJob>
   deleteDisabledItems: (job: RemovalTestJob) => Promise<{ deleted: number; bytesFreed: number; failed: RemovalTestItem[] }>
   getActiveTest: () => Promise<RemovalTestJob | null>
 
   // Session management API
-  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[]) => Promise<void>
-  loadSession: () => Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; savedAt: string } | null>
+  saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[], advisorPlan?: AdvisorPlan | null) => Promise<void>
+  loadSession: () => Promise<{ csvFilePath: string; entries: FileEntry[]; recommendations: RecommendationItem[]; markedPaths?: string[]; advisorPlan?: AdvisorPlan | null; savedAt: string } | null>
   clearSession: () => Promise<void>
 
   // Quick scan API
@@ -32,6 +32,25 @@ export interface ElectronAPI {
   }>>
   quickScan: (targetIds: string[]) => Promise<FileEntry[]>
   onScanProgress: (callback: (progress: { current: string; scanned: number; total: number }) => void) => () => void
+
+  // Backup location API
+  getBackupLocation: () => Promise<string | null>
+  setBackupLocation: (location: string | null) => Promise<void>
+  selectBackupFolder: () => Promise<string | null>
+  getAvailableDiskSpace: (targetPath: string) => Promise<number>
+  validateBackupLocation: (backupPath: string, requiredBytes: number, sourcePaths: string[]) => Promise<BackupValidation>
+
+  // AI Advisor API
+  getAdvisorPlan: (entries: FileEntry[], totalSize: number) => Promise<AdvisorPlan>
+  getClaudeApiKey: () => Promise<string | null>
+  setClaudeApiKey: (apiKey: string | null) => Promise<void>
+
+  // Duplicate finder API
+  selectSourceFolder: () => Promise<string | null>
+  getDefaultSkipFolders: () => Promise<string[]>
+  startDuplicateScan: (config: DuplicateScanConfig) => Promise<DuplicateScanResult>
+  cancelDuplicateScan: () => Promise<void>
+  onDuplicateScanProgress: (callback: (progress: DuplicateScanProgress) => void) => () => void
 }
 
 declare global {

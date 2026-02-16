@@ -3,6 +3,7 @@ import path from 'path'
 import type { RemovalTestItem, RemovalTestJob, FileEntry } from '../../src/types'
 import { saveTestState, loadTestState, clearTestState, updateTestState } from './removalState'
 import { logOperation } from './removalLogger'
+import { copyToBackup } from './backupService'
 
 const BACKUP_SUFFIX = '.disksage-backup'
 
@@ -15,12 +16,14 @@ function generateJobId(): string {
 
 /**
  * Rename items to make them inaccessible (append .disksage-backup)
+ * Optionally backs up items to a specified location first.
  *
  * SAFETY: Manifest is written BEFORE any renames occur, so if the system
  * crashes mid-operation, the manifest can be used to restore from Safe Mode.
  */
 export async function disableItems(
-  entries: FileEntry[]
+  entries: FileEntry[],
+  backupLocation?: string
 ): Promise<RemovalTestJob> {
   const jobId = generateJobId()
 
@@ -42,36 +45,53 @@ export async function disableItems(
     items,
     phase: 'testing',
     createdAt: new Date().toISOString(),
-    totalBytes
+    totalBytes,
+    backupLocation
   }
 
-  // CRITICAL: Save manifest BEFORE any renames
+  // CRITICAL: Save manifest BEFORE any operations
   // This ensures we can recover even if the system crashes mid-operation
   await saveTestState(job)
 
-  // Now perform the renames
+  // Process each item: backup (if location provided), then rename
   for (const item of items) {
     try {
       // Check if source exists
       await fs.access(item.originalPath)
 
-      // Check if target already exists (don't overwrite)
+      // Step 1: Copy to backup location (if provided)
+      if (backupLocation) {
+        const backupResult = await copyToBackup(item.originalPath, backupLocation, jobId)
+
+        if (!backupResult.success) {
+          item.status = 'failed'
+          item.error = `Backup failed: ${backupResult.error}`
+          await updateTestState(job)
+          await logOperation('backup', item.originalPath, undefined, 'failed', item.error)
+          continue
+        }
+
+        item.backupPath = backupResult.backupPath
+        await logOperation('backup', item.originalPath, item.backupPath, 'success')
+      }
+
+      // Step 2: Check if rename target already exists (don't overwrite)
       try {
         await fs.access(item.renamedPath!)
         item.status = 'failed'
-        item.error = 'Backup path already exists'
+        item.error = 'Rename target already exists'
         await updateTestState(job)
         continue
       } catch {
         // Target doesn't exist, good to proceed
       }
 
-      // Rename the folder/file
+      // Step 3: Rename the folder/file
       await fs.rename(item.originalPath, item.renamedPath!)
 
       item.status = 'renamed'
 
-      // Update manifest after each successful rename
+      // Update manifest after each successful operation
       await updateTestState(job)
 
       await logOperation('disable', item.originalPath, item.renamedPath!, 'success')
