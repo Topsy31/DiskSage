@@ -14,6 +14,8 @@ interface MarkedTabProps {
   onTestRemoval: (entries: FileEntry[], backupLocation: string) => void
   onUndoTest: () => void
   onConfirmDelete: () => void
+  onUndoSingleItem: (originalPath: string) => void
+  onDeleteSingleItem: (originalPath: string) => void
   isTestLoading: boolean
   backupLocation: string | null
   onBackupLocationChange: (location: string | null) => void
@@ -29,6 +31,8 @@ export default function MarkedTab({
   onTestRemoval,
   onUndoTest,
   onConfirmDelete,
+  onUndoSingleItem,
+  onDeleteSingleItem,
   isTestLoading,
   backupLocation,
   onBackupLocationChange
@@ -139,36 +143,39 @@ export default function MarkedTab({
   return (
     <div className="flex flex-col h-full">
       {/* Active test banner */}
-      {activeTest && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-4 flex-shrink-0">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="font-medium text-amber-800">
-                Testing removal: {activeTest.items.length} item{activeTest.items.length !== 1 ? 's' : ''} disabled ({formatSize(activeTestTotalSize)})
-              </h3>
-              <p className="text-sm text-amber-700 mt-1">
-                Use your system normally. If something breaks, click "Undo All" to restore.
-              </p>
-            </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <button
-                onClick={onUndoTest}
-                disabled={isTestLoading}
-                className="px-4 py-2 text-sm bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 disabled:opacity-50"
-              >
-                {isTestLoading ? 'Working...' : 'Undo All'}
-              </button>
-              <button
-                onClick={onConfirmDelete}
-                disabled={isTestLoading}
-                className="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-              >
-                {isTestLoading ? 'Working...' : 'Confirm & Delete'}
-              </button>
+      {activeTest && (() => {
+        const renamedCount = activeTest.items.filter(i => i.status === 'renamed').length
+        return (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-4 flex-shrink-0">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-medium text-amber-800">
+                  Testing removal: {renamedCount} of {activeTest.items.length} item{activeTest.items.length !== 1 ? 's' : ''} still disabled ({formatSize(activeTestTotalSize)})
+                </h3>
+                <p className="text-sm text-amber-700 mt-1">
+                  Use your system normally. If something breaks, undo individual items or click "Undo All" to restore.
+                </p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  onClick={onUndoTest}
+                  disabled={isTestLoading || renamedCount === 0}
+                  className="px-4 py-2 text-sm bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {isTestLoading ? 'Working...' : 'Undo All'}
+                </button>
+                <button
+                  onClick={onConfirmDelete}
+                  disabled={isTestLoading || renamedCount === 0}
+                  className="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  {isTestLoading ? 'Working...' : 'Confirm & Delete'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Backup location panel */}
       {!activeTest && markedItems.length > 0 && (
@@ -232,6 +239,9 @@ export default function MarkedTab({
                 renamedPath={testItem.renamedPath}
                 backupPath={testItem.backupPath}
                 error={testItem.error}
+                onUndo={() => onUndoSingleItem(testItem.originalPath)}
+                onDelete={() => onDeleteSingleItem(testItem.originalPath)}
+                isLoading={isTestLoading}
               />
             ))
           ) : (
@@ -330,9 +340,12 @@ interface TestItemProps {
   renamedPath?: string
   backupPath?: string
   error?: string
+  onUndo?: () => void
+  onDelete?: () => void
+  isLoading?: boolean
 }
 
-function TestItem({ entry, recommendation, status, renamedPath, backupPath, error }: TestItemProps) {
+function TestItem({ entry, recommendation, status, renamedPath, backupPath, error, onUndo, onDelete, isLoading }: TestItemProps) {
   const folderName = entry.path.split('\\').pop() || entry.path
   const classification = recommendation?.classification
 
@@ -401,8 +414,28 @@ function TestItem({ entry, recommendation, status, renamedPath, backupPath, erro
         )}
       </div>
 
-      <div className="text-right flex-shrink-0">
+      <div className="text-right flex-shrink-0 flex items-center gap-2">
         <div className="font-medium text-gray-700">{formatSize(entry.size)}</div>
+        {status === 'renamed' && onUndo && onDelete && (
+          <>
+            <button
+              onClick={onUndo}
+              disabled={isLoading}
+              className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-600 rounded hover:bg-gray-50 disabled:opacity-50"
+              title="Restore this item"
+            >
+              Undo
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={isLoading}
+              className="px-2 py-1 text-xs bg-red-50 border border-red-200 text-red-600 rounded hover:bg-red-100 disabled:opacity-50"
+              title="Permanently delete this item"
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

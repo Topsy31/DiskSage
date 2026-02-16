@@ -15,6 +15,8 @@ export interface ElectronAPI {
   restoreItems: (job: RemovalTestJob) => Promise<RemovalTestJob>
   deleteDisabledItems: (job: RemovalTestJob) => Promise<{ deleted: number; bytesFreed: number; failed: RemovalTestItem[] }>
   getActiveTest: () => Promise<RemovalTestJob | null>
+  restoreSingleItem: (job: RemovalTestJob, originalPath: string) => Promise<RemovalTestJob>
+  deleteSingleItem: (job: RemovalTestJob, originalPath: string) => Promise<RemovalTestJob>
 
   // Session management API
   saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[], advisorPlan?: AdvisorPlan | null) => Promise<void>

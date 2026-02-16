@@ -6,7 +6,7 @@ import { validatePath } from './services/pathValidator'
 import { logAudit, logProblemReport } from './services/auditLog'
 import { askClaudeAI, getAdvisorPlan } from './services/claude'
 import { webResearch } from './services/webResearch'
-import { disableItems, restoreItems, deleteDisabledItems, getActiveTest } from './services/removalService'
+import { disableItems, restoreItems, deleteDisabledItems, getActiveTest, restoreSingleItem, deleteSingleItem } from './services/removalService'
 import { saveSession, loadSession, clearSession } from './services/sessionService'
 import { quickScan, getAvailableTargets, SCAN_TARGETS } from './services/scanner'
 import { getBackupLocation, setBackupLocation, getClaudeApiKey, setClaudeApiKey } from './services/settingsService'
@@ -178,6 +178,14 @@ ipcMain.handle('delete-disabled-items', async (_event, job) => {
 
 ipcMain.handle('get-active-test', async () => {
   return getActiveTest()
+})
+
+ipcMain.handle('restore-single-item', async (_event, job, originalPath: string) => {
+  return restoreSingleItem(job, originalPath)
+})
+
+ipcMain.handle('delete-single-item', async (_event, job, originalPath: string) => {
+  return deleteSingleItem(job, originalPath)
 })
 
 // Session management handlers

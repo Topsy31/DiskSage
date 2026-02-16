@@ -51,6 +51,14 @@ const electronAPI = {
     return ipcRenderer.invoke('get-active-test')
   },
 
+  restoreSingleItem: (job: RemovalTestJob, originalPath: string): Promise<RemovalTestJob> => {
+    return ipcRenderer.invoke('restore-single-item', job, originalPath)
+  },
+
+  deleteSingleItem: (job: RemovalTestJob, originalPath: string): Promise<RemovalTestJob> => {
+    return ipcRenderer.invoke('delete-single-item', job, originalPath)
+  },
+
   // Session management API
   saveSession: (csvFilePath: string, entries: FileEntry[], recommendations: RecommendationItem[], markedPaths?: string[], advisorPlan?: AdvisorPlan | null): Promise<void> => {
     return ipcRenderer.invoke('save-session', csvFilePath, entries, recommendations, markedPaths, advisorPlan)

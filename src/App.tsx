@@ -357,6 +357,85 @@ function App() {
     }
   }, [activeTest, csvFilePath, markedPaths])
 
+  const handleUndoSingleItem = useCallback(async (originalPath: string) => {
+    if (!activeTest) return
+    setTestLoading(true)
+    try {
+      const updatedJob = await window.electronAPI.restoreSingleItem(activeTest, originalPath)
+      if (updatedJob.phase === 'confirmed') {
+        setActiveTest(null)
+      } else {
+        setActiveTest(updatedJob)
+      }
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to restore item'
+      }))
+    } finally {
+      setTestLoading(false)
+    }
+  }, [activeTest])
+
+  const handleDeleteSingleItem = useCallback(async (originalPath: string) => {
+    if (!activeTest) return
+    setTestLoading(true)
+    try {
+      const updatedJob = await window.electronAPI.deleteSingleItem(activeTest, originalPath)
+      if (updatedJob.phase === 'confirmed') {
+        setActiveTest(null)
+
+        // Remove all deleted items from state
+        const deletedPaths = new Set(
+          updatedJob.items
+            .filter(item => item.status === 'deleted')
+            .map(item => item.originalPath.toLowerCase())
+        )
+
+        const newMarkedPaths = new Set<string>()
+        for (const path of markedPaths) {
+          if (!deletedPaths.has(path)) {
+            newMarkedPaths.add(path)
+          }
+        }
+        setMarkedPaths(newMarkedPaths)
+
+        setState(prev => {
+          const newEntries = prev.entries.filter(e => !deletedPaths.has(e.path.toLowerCase()))
+          const newRecommendations = prev.recommendations.filter(r => !deletedPaths.has(r.entry.path.toLowerCase()))
+          const classificationMap = new Map<string, RecommendationItem>()
+          for (const rec of newRecommendations) {
+            classificationMap.set(rec.entry.path.toLowerCase(), rec)
+          }
+          const newTree = buildTree(newEntries, (path) => {
+            const rec = classificationMap.get(path.toLowerCase())
+            return rec?.classification
+          })
+          if (csvFilePath) {
+            window.electronAPI.saveSession(csvFilePath, newEntries, newRecommendations, Array.from(newMarkedPaths))
+          }
+          return {
+            ...prev,
+            entries: newEntries,
+            recommendations: newRecommendations,
+            tree: newTree,
+            selectedNode: null,
+            selectedItem: null
+          }
+        })
+      } else {
+        setActiveTest(updatedJob)
+      }
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to delete item'
+      }))
+    } finally {
+      setTestLoading(false)
+    }
+  }, [activeTest, csvFilePath, markedPaths])
+
   // AI Advisor handlers
   const handleGenerateAdvisorPlan = useCallback(async () => {
     setAdvisorLoading(true)
@@ -504,6 +583,8 @@ function App() {
                 onTestRemoval={handleTestRemoval}
                 onUndoTest={handleUndoTest}
                 onConfirmDelete={handleConfirmDelete}
+                onUndoSingleItem={handleUndoSingleItem}
+                onDeleteSingleItem={handleDeleteSingleItem}
                 isTestLoading={testLoading}
                 backupLocation={backupLocation}
                 onBackupLocationChange={handleBackupLocationChange}
@@ -532,6 +613,8 @@ function App() {
                 onTestRemoval={handleTestRemoval}
                 onUndoTest={handleUndoTest}
                 onConfirmDelete={handleConfirmDelete}
+                onUndoSingleItem={handleUndoSingleItem}
+                onDeleteSingleItem={handleDeleteSingleItem}
                 isTestLoading={testLoading}
               />
             )}

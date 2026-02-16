@@ -9,6 +9,8 @@ interface DuplicatesTabProps {
   onTestRemoval: (entries: FileEntry[], backupLocation: string) => void
   onUndoTest: () => void
   onConfirmDelete: () => void
+  onUndoSingleItem: (originalPath: string) => void
+  onDeleteSingleItem: (originalPath: string) => void
   isTestLoading: boolean
 }
 
@@ -42,6 +44,8 @@ export default function DuplicatesTab({
   onTestRemoval,
   onUndoTest,
   onConfirmDelete,
+  onUndoSingleItem,
+  onDeleteSingleItem,
   isTestLoading
 }: DuplicatesTabProps) {
   // Internal state
@@ -242,6 +246,7 @@ export default function DuplicatesTab({
     })).sort((a, b) => b.entry.size - a.entry.size)
 
     const testTotalSize = testItems.reduce((sum, item) => sum + item.entry.size, 0)
+    const renamedCount = activeTest.items.filter(i => i.status === 'renamed').length
 
     return (
       <div className="flex flex-col h-full">
@@ -249,23 +254,23 @@ export default function DuplicatesTab({
           <div className="flex items-start justify-between">
             <div>
               <h3 className="font-medium text-amber-800">
-                Testing removal: {activeTest.items.length} duplicate{activeTest.items.length !== 1 ? 's' : ''} disabled ({formatSize(testTotalSize)})
+                Testing removal: {renamedCount} of {activeTest.items.length} duplicate{activeTest.items.length !== 1 ? 's' : ''} still disabled ({formatSize(testTotalSize)})
               </h3>
               <p className="text-sm text-amber-700 mt-1">
-                Use your system normally. If something breaks, click "Undo All" to restore.
+                Use your system normally. If something breaks, undo individual items or click "Undo All" to restore.
               </p>
             </div>
             <div className="flex gap-2 flex-shrink-0">
               <button
                 onClick={onUndoTest}
-                disabled={isTestLoading}
+                disabled={isTestLoading || renamedCount === 0}
                 className="px-4 py-2 text-sm bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 disabled:opacity-50"
               >
                 {isTestLoading ? 'Working...' : 'Undo All'}
               </button>
               <button
                 onClick={onConfirmDelete}
-                disabled={isTestLoading}
+                disabled={isTestLoading || renamedCount === 0}
                 className="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
               >
                 {isTestLoading ? 'Working...' : 'Confirm & Delete'}
@@ -284,6 +289,9 @@ export default function DuplicatesTab({
                 renamedPath={testItem.renamedPath}
                 backupPath={testItem.backupPath}
                 error={testItem.error}
+                onUndo={() => onUndoSingleItem(testItem.originalPath)}
+                onDelete={() => onDeleteSingleItem(testItem.originalPath)}
+                isLoading={isTestLoading}
               />
             ))}
           </div>
@@ -700,9 +708,12 @@ interface DuplicateTestItemProps {
   renamedPath?: string
   backupPath?: string
   error?: string
+  onUndo?: () => void
+  onDelete?: () => void
+  isLoading?: boolean
 }
 
-function DuplicateTestItem({ entry, status, renamedPath, backupPath, error }: DuplicateTestItemProps) {
+function DuplicateTestItem({ entry, status, renamedPath, backupPath, error, onUndo, onDelete, isLoading }: DuplicateTestItemProps) {
   const fileName = entry.path.split('\\').pop() || entry.path
 
   const statusColors: Record<string, string> = {
@@ -756,8 +767,28 @@ function DuplicateTestItem({ entry, status, renamedPath, backupPath, error }: Du
           </div>
         )}
       </div>
-      <div className="text-right flex-shrink-0">
+      <div className="text-right flex-shrink-0 flex items-center gap-2">
         <div className="font-medium text-gray-700">{formatSize(entry.size)}</div>
+        {status === 'renamed' && onUndo && onDelete && (
+          <>
+            <button
+              onClick={onUndo}
+              disabled={isLoading}
+              className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-600 rounded hover:bg-gray-50 disabled:opacity-50"
+              title="Restore this item"
+            >
+              Undo
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={isLoading}
+              className="px-2 py-1 text-xs bg-red-50 border border-red-200 text-red-600 rounded hover:bg-red-100 disabled:opacity-50"
+              title="Permanently delete this item"
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

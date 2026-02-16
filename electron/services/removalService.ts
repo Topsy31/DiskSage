@@ -195,6 +195,94 @@ export async function deleteDisabledItems(
 }
 
 /**
+ * Restore a single item by renaming back to original
+ */
+export async function restoreSingleItem(
+  job: RemovalTestJob,
+  originalPath: string
+): Promise<RemovalTestJob> {
+  const item = job.items.find(
+    i => i.originalPath.toLowerCase() === originalPath.toLowerCase()
+  )
+
+  if (!item || item.status !== 'renamed' || !item.renamedPath) {
+    throw new Error(`Item not found or not in 'renamed' state: ${originalPath}`)
+  }
+
+  try {
+    await fs.access(item.renamedPath)
+
+    // Check if original path is now occupied (app recreated it)
+    try {
+      await fs.access(item.originalPath)
+      item.status = 'failed'
+      item.error = 'Original path now exists (may have been recreated by an application)'
+      await updateTestState(job)
+      await logOperation('restore', item.originalPath, undefined, 'failed', item.error)
+      return job
+    } catch {
+      // Original path is free, good to proceed
+    }
+
+    await fs.rename(item.renamedPath, item.originalPath)
+    item.status = 'restored'
+    item.renamedPath = undefined
+    await logOperation('restore', item.originalPath, undefined, 'success')
+  } catch (err) {
+    item.status = 'failed'
+    item.error = err instanceof Error ? err.message : 'Unknown error'
+    await logOperation('restore', item.originalPath, item.renamedPath, 'failed', item.error)
+  }
+
+  // Check if test is complete (no more 'renamed' items)
+  const hasRemainingRenamed = job.items.some(i => i.status === 'renamed')
+  if (!hasRemainingRenamed) {
+    await clearTestState()
+    return { ...job, phase: 'confirmed', completedAt: new Date().toISOString() }
+  }
+
+  await updateTestState(job)
+  return job
+}
+
+/**
+ * Permanently delete a single disabled item
+ */
+export async function deleteSingleItem(
+  job: RemovalTestJob,
+  originalPath: string
+): Promise<RemovalTestJob> {
+  const item = job.items.find(
+    i => i.originalPath.toLowerCase() === originalPath.toLowerCase()
+  )
+
+  if (!item || item.status !== 'renamed' || !item.renamedPath) {
+    throw new Error(`Item not found or not in 'renamed' state: ${originalPath}`)
+  }
+
+  try {
+    await fs.access(item.renamedPath)
+    await fs.rm(item.renamedPath, { recursive: true, force: true })
+    item.status = 'deleted'
+    await logOperation('delete', item.renamedPath, undefined, 'success')
+  } catch (err) {
+    item.status = 'failed'
+    item.error = err instanceof Error ? err.message : 'Unknown error'
+    await logOperation('delete', item.renamedPath || item.originalPath, undefined, 'failed', item.error)
+  }
+
+  // Check if test is complete (no more 'renamed' items)
+  const hasRemainingRenamed = job.items.some(i => i.status === 'renamed')
+  if (!hasRemainingRenamed) {
+    await clearTestState()
+    return { ...job, phase: 'confirmed', completedAt: new Date().toISOString() }
+  }
+
+  await updateTestState(job)
+  return job
+}
+
+/**
  * Get the current active test (if any)
  */
 export async function getActiveTest(): Promise<RemovalTestJob | null> {
